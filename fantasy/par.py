@@ -44,9 +44,10 @@ def replacement_levels(proj: pl.DataFrame, league: LeagueConfig) -> dict[str, fl
     """Per-game points of the replacement-rank player at each position.
 
     Warns if a position's projection pool is shorter than its replacement rank: the
-    level then falls back to the worst available player, which *understates*
-    replacement and inflates PAR for everyone at that position. That means the
-    projection export is truncated and should be re-pulled.
+    level then falls back to the worst available player. That player is ranked *above*
+    the true replacement slot, so the level comes out too high, which *understates* PAR
+    for everyone at that position. It also means the export is truncated, so players
+    past the cutoff are missing from the board entirely -- usually the bigger problem.
     """
     ranks = league.replacement_rank()
     levels: dict[str, float] = {}
@@ -63,8 +64,9 @@ def replacement_levels(proj: pl.DataFrame, league: LeagueConfig) -> dict[str, fl
         if pool.len() < rank:
             warnings.warn(
                 f"Only {pool.len()} {pos} projections but replacement rank is {rank}. "
-                f"Using the worst available {pos}, which understates replacement and "
-                f"inflates {pos} PAR. Re-export the {pos} projections.",
+                f"Falling back to the worst available {pos}, which sets replacement too "
+                f"high and understates {pos} PAR -- and players past the cutoff are "
+                f"missing from the board. Re-export the {pos} projections.",
                 stacklevel=2,
             )
         idx = min(rank, pool.len()) - 1  # clamp if the pool is short

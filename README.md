@@ -87,11 +87,12 @@ hard to predict, worth knowing before over-trusting this component.
 4. **The projections are Half-PPR** (verified by recomputing `FPTS` from the component
    stats), while `ADP_SCORING` currently defaults to the **`Std`** ADP file. Set it to
    `"Half_PPR"` to make the two consistent.
-5. **⚠️ The QB projections export is truncated — only 10 QBs.** Replacement rank for QB is
-   12, so the level falls back to the worst available QB, which *understates* replacement
-   and *inflates* every QB's PAR. Mahomes, Herbert, Caleb Williams, Kyler Murray and ~28
-   others are missing from the board entirely. Re-export the QB projections with all
-   players included. `replacement_levels` raises a `UserWarning` whenever a pool is short.
+5. **A truncated projections export corrupts that position's replacement level.** If a
+   pool is shorter than its replacement rank, the level falls back to the worst available
+   player — who ranks *above* the true replacement slot — so replacement comes out too
+   high and PAR is *understated*. The larger problem is that players past the cutoff are
+   missing from the board entirely. `replacement_levels` raises a `UserWarning` whenever a
+   pool is short; treat it as a signal to re-export.
 
 ## Roadmap
 
