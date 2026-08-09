@@ -14,6 +14,7 @@ import nflreadpy as nfl
 import polars as pl
 
 from fantasy import games_model as gm
+from fantasy.adp import attach_adp, load_adp
 from fantasy.history import build_target_frame, build_training_frame
 from fantasy.par import LeagueConfig, build_par_table, replacement_levels
 from fantasy.projections import load_projections
@@ -22,6 +23,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")  # player names break cp1252 consoles
 
 FIRST_TARGET = 2012  # first season used for training the games model
+ADP_SCORING = "Std"  # "Std" | "Half_PPR" | "PPR" -- see fantasy/adp.py SCORING_FILES
 
 
 def detect_last_completed_season() -> int:
@@ -45,8 +47,12 @@ def main() -> None:
     target_season = last_completed + 1
     print(f"Last completed season: {last_completed}  ->  projecting {target_season}\n")
 
-    # 1. projections (per-game rate + gsis_id)
+    # 1. projections (per-game rate + gsis_id), plus ADP for draft optimization
     proj = load_projections("fantasyprosdata")
+    adp = load_adp("fantasyprosdp", scoring=ADP_SCORING)
+    proj = attach_adp(proj, adp)
+    matched = proj.filter(pl.col("adp").is_not_null()).height
+    print(f"ADP ({ADP_SCORING}): {adp.height} rows, matched to {matched}/{proj.height} projected players\n")
 
     # 2. games model: train, compare, pick best, predict
     train = build_training_frame(FIRST_TARGET, last_completed).to_pandas()
@@ -75,9 +81,27 @@ def main() -> None:
     levels = replacement_levels(proj, league)
     print("Replacement cutoff rank by position:", league.replacement_rank())
     print("Replacement level (pts/game):", {k: round(v, 2) for k, v in levels.items()})
-    with pl.Config(tbl_rows=30, tbl_cols=-1, float_precision=2):
-        print("\nTop 30 by PAR:")
-        print(table.head(30))
+    with pl.Config(tbl_rows=30, tbl_cols=-1, float_precision=1, fmt_str_lengths=22):
+        print("\nTop 30 by PAR (full detail in the CSV):")
+        print(
+            table.head(30).select(
+                ["player", "team", "position", "expected_points_per_game",
+                 "expected_games_played", "PAR", "par_rank", "adp", "adp_delta"]
+            )
+        )
+        # K/DST excluded: everyone streams them, so their PAR isn't comparable to
+        # skill positions and they'd otherwise dominate this view.
+        print("\nBiggest values vs ADP (skill positions, PAR rank 1-100, going latest):")
+        print(
+            table.filter(
+                pl.col("adp").is_not_null()
+                & (pl.col("par_rank") <= 100)
+                & pl.col("position").is_in(["QB", "RB", "WR", "TE"])
+            )
+            .sort("adp_delta", descending=True)
+            .head(10)
+            .select(["player", "team", "position", "PAR", "par_rank", "adp", "adp_delta"])
+        )
     print(f"\nFull table ({table.height} players) written to {out_path}")
 
 

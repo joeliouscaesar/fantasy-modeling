@@ -25,11 +25,17 @@ to `outputs/par_table.csv` with columns:
 | `replacement_ppg` | per-game points of the last startable player at that position |
 | `par_per_game` | `expected_points_per_game − replacement_ppg` |
 | `PAR` | `par_per_game × expected_games_played` — the draft ranking metric |
+| `par_rank` | overall rank by `PAR` (1 = best) |
+| `adp` | FantasyPros average draft position (`AVG` column) |
+| `adp_overall_rank`, `bye` | ADP consensus rank and bye week |
+| `adp_delta` | `adp − par_rank`; **positive = going later than PAR justifies** (value) |
 
 ## Data sources
 
 - **FantasyPros season projections** — CSV exports in `fantasyprosdata/` (one per position:
   QB/RB/WR/TE/K/DST). These provide the season point projections. Re-export annually.
+- **FantasyPros ADP** — exports in `fantasyprosdp/` (`Std` / `Half_PPR` / `PPR`). Supplies
+  the `AVG` draft position. Switch files via `ADP_SCORING` in `build_par.py`.
 - **nflreadpy** — historical `load_player_stats` (games played + fantasy points),
   `load_players` (age, rookie season, draft), and `load_ff_playerids` (name → `gsis_id`
   bridge). Truly free, API-accessible *forward* projections basically don't exist, so
@@ -42,6 +48,7 @@ to `outputs/par_table.csv` with columns:
 | `fantasy/projections.py` | Load FantasyPros CSVs → per-position `FPTS` and a per-game rate |
 | `fantasy/history.py` | Historical games-played + features (age, experience, prior/2yr availability, career avg, draft round, position) |
 | `fantasy/names.py` | Normalize FantasyPros names → `gsis_id` via `ff_playerids` (unambiguous matches only) |
+| `fantasy/adp.py` | Load FantasyPros ADP exports and join them onto the projections |
 | `fantasy/games_model.py` | Pluggable model registry + forward-chaining CV + prediction |
 | `fantasy/par.py` | League config → replacement levels (FLEX-aware) → final PAR table |
 | `build_par.py` | End-to-end orchestrator |
@@ -77,6 +84,14 @@ hard to predict, worth knowing before over-trusting this component.
    being active/rostered* — a mild upward bias for the chronically injured. Rookies are
    modeled from age / draft / position; only K/DST and the handful of unmatched skill
    players fall back to a flat 17.
+4. **The projections are Half-PPR** (verified by recomputing `FPTS` from the component
+   stats), while `ADP_SCORING` currently defaults to the **`Std`** ADP file. Set it to
+   `"Half_PPR"` to make the two consistent.
+5. **⚠️ The QB projections export is truncated — only 10 QBs.** Replacement rank for QB is
+   12, so the level falls back to the worst available QB, which *understates* replacement
+   and *inflates* every QB's PAR. Mahomes, Herbert, Caleb Williams, Kyler Murray and ~28
+   others are missing from the board entirely. Re-export the QB projections with all
+   players included. `replacement_levels` raises a `UserWarning` whenever a pool is short.
 
 ## Roadmap
 

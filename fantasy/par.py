@@ -8,6 +8,7 @@ slots are distributed across RB/WR/TE by a configurable share. PAR is then:
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -40,7 +41,13 @@ class LeagueConfig:
 
 
 def replacement_levels(proj: pl.DataFrame, league: LeagueConfig) -> dict[str, float]:
-    """Per-game points of the replacement-rank player at each position."""
+    """Per-game points of the replacement-rank player at each position.
+
+    Warns if a position's projection pool is shorter than its replacement rank: the
+    level then falls back to the worst available player, which *understates*
+    replacement and inflates PAR for everyone at that position. That means the
+    projection export is truncated and should be re-pulled.
+    """
     ranks = league.replacement_rank()
     levels: dict[str, float] = {}
     for pos, rank in ranks.items():
@@ -50,10 +57,18 @@ def replacement_levels(proj: pl.DataFrame, league: LeagueConfig) -> dict[str, fl
             .get_column("points_per_game")
         )
         if pool.len() == 0:
+            warnings.warn(f"No {pos} projections found; replacement level set to 0.", stacklevel=2)
             levels[pos] = 0.0
-        else:
-            idx = min(rank, pool.len()) - 1  # clamp if the pool is short
-            levels[pos] = float(pool[idx])
+            continue
+        if pool.len() < rank:
+            warnings.warn(
+                f"Only {pool.len()} {pos} projections but replacement rank is {rank}. "
+                f"Using the worst available {pos}, which understates replacement and "
+                f"inflates {pos} PAR. Re-export the {pos} projections.",
+                stacklevel=2,
+            )
+        idx = min(rank, pool.len()) - 1  # clamp if the pool is short
+        levels[pos] = float(pool[idx])
     return levels
 
 
@@ -65,7 +80,10 @@ def build_par_table(
     """Assemble the final PAR table.
 
     proj: from projections.load_projections (needs player, team, position,
-          points_per_game, gsis_id).
+          points_per_game, gsis_id). If adp.attach_adp has been applied, the optional
+          adp / adp_overall_rank / bye columns are carried through and a par_rank plus
+          an adp_delta (ADP minus PAR rank; positive = going later than PAR justifies)
+          are added for draft optimization.
     expected_games: (gsis_id, expected_games) from the games model.
     """
     league = league or LeagueConfig()
@@ -88,18 +106,25 @@ def build_par_table(
         )
         .with_columns((pl.col("par_per_game") * pl.col("expected_games")).alias("PAR"))
         .rename({"points_per_game": "expected_points_per_game", "expected_games": "expected_games_played"})
-        .select(
-            [
-                "player",
-                "team",
-                "position",
-                "expected_points_per_game",
-                "expected_games_played",
-                "replacement_ppg",
-                "par_per_game",
-                "PAR",
-            ]
-        )
         .sort("PAR", descending=True)
+        .with_columns(pl.col("PAR").rank(method="ordinal", descending=True).cast(pl.Int64).alias("par_rank"))
     )
-    return out
+
+    columns = [
+        "player",
+        "team",
+        "position",
+        "expected_points_per_game",
+        "expected_games_played",
+        "replacement_ppg",
+        "par_per_game",
+        "PAR",
+        "par_rank",
+    ]
+
+    # carry through ADP if attach_adp was applied upstream
+    if "adp" in out.columns:
+        out = out.with_columns((pl.col("adp") - pl.col("par_rank")).alias("adp_delta"))
+        columns += [c for c in ("adp", "adp_overall_rank", "adp_delta", "bye") if c in out.columns]
+
+    return out.select(columns).sort("PAR", descending=True)
