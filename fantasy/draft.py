@@ -28,9 +28,18 @@ STARTING_POSITIONS = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
 
 def make_draft_order() -> list[int]:
     """
-    Returns dictionary of picks keyed by team number
+    Returns a snake pick order as a list
     """
-    pass
+    draft_order = []
+    teams = [team for team in range(NUM_TEAMS)]
+    reverse_teams = teams.copy()
+    reverse_teams.reverse()
+    for round in range(ROSTER_SIZE):
+        if round % 2 == 0:
+            draft_order += teams
+        else:
+            draft_order += reverse_teams
+    return draft_order
 
 class Roster():
     def __init__(self, starting_positions:dict[str, int], roster_size:int):
@@ -42,7 +51,7 @@ class Roster():
             "K":[],
             "DEF":[],
             "FLEX":[]
-        }
+        } 
         assert set(starting_positions.keys()) == set(self.drafted.keys()), "starting positions incorrectly formatted"
         self.starting_positions = starting_positions
         self.roster_size = roster_size
@@ -103,7 +112,6 @@ def modified_par(player:Player, roster:Roster, bench_penalty:float, position:str
     Calculates the modifed par for adding this player. Applies a simple bench_penalty
     if we don't project this player to be a starter. Accounts for bye's of players 
     who are already on the roster at this position.
-
     """
     position = player.position if position is None else position
     # return their modified par
