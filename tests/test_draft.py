@@ -1,4 +1,5 @@
-from fantasy.draft import WEEKS, Player, get_starting_games
+
+from fantasy.draft import WEEKS, Player, Roster, get_starting_games, get_flex_players, modified_par
 
 #############################################################
 # Tests for get_starting_games
@@ -101,3 +102,73 @@ def test_skips_worse_players3():
     ]
     new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
     assert get_starting_games(new_player, drafted_players, 2) == 6
+
+#############################################################
+# Tests for get_flex_players
+#############################################################
+
+def make_roster(
+    starting_positions={"QB":1,"RB":2,"WR":2,"FLEX":1,"TE":1,"DEF":1,"K":1},
+    roster_size=15
+) -> Roster:
+    """Build a Roster with sensible defaults so tests only state what they care about."""
+    return Roster(
+        starting_positions,
+        roster_size=roster_size
+    )
+
+def test_empty_roster():
+    roster = make_roster()
+    assert get_flex_players(roster) == []
+
+def test_all_rbs():
+    # test that only rb3 is a flex player, their par_per_game and expected_games_played are adjusted
+    roster = make_roster()
+    rb1 = make_player(par_per_game=10, position="RB", bye=1)
+    rb2 = make_player(par_per_game=9, position="RB", bye=2)
+    rb3 = make_player(par_per_game=8, par_per_game_flex=6, position="RB", bye=3)
+    roster.drafted["RB"] = [rb1, rb2, rb3]
+    roster.drafted["RB"].sort(reverse=True)
+    rb3_flex = make_player(par_per_game=6, par_per_game_flex=6, position="FLEX", bye=3,expected_games_played=15)
+    assert get_flex_players(roster) == [rb3_flex]
+
+def test_all_multiple_pos():
+    # test that rb3 + wr3 are flex players
+    roster = make_roster()
+    rb1 = make_player(par_per_game=10, position="RB", bye=1)
+    rb2 = make_player(par_per_game=9, position="RB", bye=2)
+    rb3 = make_player(par_per_game=8, par_per_game_flex=6, position="RB", bye=3, name="flex1")
+    wr1 = make_player(par_per_game=10, position="WR", bye=1)
+    wr2 = make_player(par_per_game=9, position="WR", bye=2)
+    wr3 = make_player(par_per_game=7, par_per_game_flex=5, position="WR", bye=3, name="flex2")
+    roster.drafted["RB"] = [rb1, rb2, rb3]
+    roster.drafted["RB"].sort(reverse=True)
+    roster.drafted["WR"] = [wr1, wr2, wr3]
+    roster.drafted["WR"].sort(reverse=True)
+    rb3_flex = make_player(par_per_game=6, par_per_game_flex=6, position="FLEX", bye=3,expected_games_played=15, name="flex1")
+    wr3_flex = make_player(par_per_game=5, par_per_game_flex=5, position="FLEX", bye=3,expected_games_played=15, name="flex2")
+    assert get_flex_players(roster) == [rb3_flex, wr3_flex]
+
+def test_all_multiple_pos2():
+    # same as above but change output order
+    roster = make_roster()
+    rb1 = make_player(par_per_game=10, position="RB", bye=1)
+    rb2 = make_player(par_per_game=9, position="RB", bye=2)
+    rb3 = make_player(par_per_game=7, par_per_game_flex=5, position="RB", bye=3, name="flex1")
+    wr1 = make_player(par_per_game=10, position="WR", bye=1)
+    wr2 = make_player(par_per_game=9, position="WR", bye=2)
+    wr3 = make_player(par_per_game=8, par_per_game_flex=6, position="WR", bye=3, name="flex2")
+    roster.drafted["RB"] = [rb1, rb2, rb3]
+    roster.drafted["RB"].sort(reverse=True)
+    roster.drafted["WR"] = [wr1, wr2, wr3]
+    roster.drafted["WR"].sort(reverse=True)
+    rb3_flex = make_player(par_per_game=5, par_per_game_flex=5, position="FLEX", bye=3,expected_games_played=15, name="flex1")
+    wr3_flex = make_player(par_per_game=6, par_per_game_flex=6, position="FLEX", bye=3,expected_games_played=15, name="flex2")
+    assert get_flex_players(roster) == [wr3_flex, rb3_flex]
+
+def test_other_pos():
+    # tests qb, def, k not added
+    roster = make_roster()
+    for pos in ["QB","DEF","K"]:
+        roster.drafted[pos] = [make_player(position=pos), make_player(position=pos), make_player(position=pos)]
+    assert get_flex_players(roster) == []
