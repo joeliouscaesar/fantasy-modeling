@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 fantasyprosdata/
+fantasyprosdp/
 outputs/
 *.egg-info
 

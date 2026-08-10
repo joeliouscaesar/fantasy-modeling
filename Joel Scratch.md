@@ -64,6 +64,7 @@ So we slowly introduce team's picking optimally into the process. Good too becau
 - Think about replacement defn, probably want it to be relative to the top free agents, not top starters.
 - In the draft optimization could re-calculate PAR after each round? True sense of who will be available. 
 
-
+1. Look through Claude code, add initial overall rankings to that par_table.csv.
+2. I'm envision a roster class, 
 
 
