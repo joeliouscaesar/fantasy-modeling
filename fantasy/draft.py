@@ -172,8 +172,11 @@ def get_team_remaining_picks(pick:int, draft_order:list[int]) -> list[int]:
 
 # def get_player(partable, position_rank, roster):
 
-def subset_partable_not_on_roster(partable:pl.DataFrame, roster:Roster):
+def subset_partable_not_on_roster(partable:pl.DataFrame, roster:Roster) -> pl.DataFrame:
     subpartable = partable.clone()
+    players_on_roster = roster.get_players()
+    if len(players_on_roster) == 0:
+        return subpartable
     drafted = pl.DataFrame(
         [
             {"player":player.name, "position":player.position, "drafted":1} for player in roster.get_players()
@@ -185,17 +188,40 @@ def subset_partable_not_on_roster(partable:pl.DataFrame, roster:Roster):
 def get_draftable_positions(team_picks, position_ignore) -> list[list[str]]:
     """
     List of draftable positions for each of the team's picks per position ignore
+
+    position_ignore values are a count of picks, so {"K":2} suppresses K at the
+    team's first two picks (indices 0 and 1) and allows it from the third on.
     """
     positions = {"QB","RB","WR","TE","DEF","K"}
     if position_ignore is None:
         return [sorted(positions) for _ in team_picks]
     draftable = []
     for pick_num in range(len(team_picks)):
-        ignored:set = {pos for (pos, ignore_for) in position_ignore.items() if ignore_for >= pick_num}    
+        ignored:set = {pos for (pos, ignore_for) in position_ignore.items() if ignore_for > pick_num}
         draftable.append(
             sorted(positions.difference(ignored))
         )
     return draftable
+
+def get_available_players(overall_pick_num, position, not_drafted_df) -> pl.DataFrame:
+    """
+    Players at a position still available at this pick, best PAR first
+    """
+    return not_drafted_df.filter(
+        (pl.col("drafted_after") >= overall_pick_num) & (pl.col("position") == position) & (~pl.col("drafted"))
+    ).sort(
+        by="PAR", descending=True
+    )
+
+def _player_from_row(row:dict) -> Player:
+    return Player(
+        row["par_per_game"],
+        row["expected_games_played"],
+        row["flex_par_per_game"],
+        row["bye"],
+        row["player"],
+        row["position"]
+    )
 
 def get_player(overall_pick_num, position, pos_num, not_drafted_df) -> Player:
     """
@@ -204,23 +230,22 @@ def get_player(overall_pick_num, position, pos_num, not_drafted_df) -> Player:
     - position is the str position
     - pos_num is the rank at that position by PAR
     - not drafted df is the polars dataframe with par info, etc
+
+    Raises if there is no player at that rank. Use get_player_or_none to search
+    across positions without having to catch that.
     """
-    top_player_dict = not_drafted_df.filter(
-        (pl.col("drafted_after") >= overall_pick_num) & (pl.col("position") == position) & (~pl.col("drafted"))
-    ).sort(
-        by="PAR", descending=True
-    ).row(pos_num, named=True)
+    available = get_available_players(overall_pick_num, position, not_drafted_df)
+    return _player_from_row(available.row(pos_num, named=True))
 
-    player = Player(
-        top_player_dict["par_per_game"],
-        top_player_dict["expected_games_played"],
-        top_player_dict["flex_par_per_game"],
-        top_player_dict["bye"],
-        top_player_dict["player"],
-        top_player_dict["position"]
-    )
-
-    return player
+def get_player_or_none(overall_pick_num, position, pos_num, not_drafted_df) -> Player|None:
+    """
+    Same as get_player but returns None when the position is too thin to have a
+    player at pos_num, rather than raising
+    """
+    available = get_available_players(overall_pick_num, position, not_drafted_df)
+    if pos_num >= available.height:
+        return None
+    return _player_from_row(available.row(pos_num, named=True))
 
 def set_player_draft_status(player:Player, status:bool, not_drafted_df:pl.DataFrame) -> pl.DataFrame:
     """
@@ -232,17 +257,46 @@ def set_player_draft_status(player:Player, status:bool, not_drafted_df:pl.DataFr
         pl.when(player_pred).then(status).otherwise(pl.col("drafted")).alias("drafted")
     )
 
+def _next_selection(team_pick_num, pos_id, pos_rank, team_picks, draftable_positions, not_drafted_df):
+    """
+    Finds the next available player for a pick, starting the search at
+    (pos_id, pos_rank) and walking forward through the position list.
+
+    Positions too thin to have a player at that rank are skipped rather than
+    raising, which happens once the good players at a position are used up.
+
+    Returns (player, pos_id, pos_rank), or None if this pick has no options left.
+    """
+    overall_pick_num = team_picks[team_pick_num]
+    positions = draftable_positions[team_pick_num]
+    while pos_id < len(positions):
+        player = get_player_or_none(overall_pick_num, positions[pos_id], pos_rank, not_drafted_df)
+        if player is not None:
+            return (player, pos_id, pos_rank)
+        # not enough players left at this position, so try the next one
+        pos_id += 1
+        pos_rank = 0
+    return None
+
 def get_draft_combos(team_picks, roster, partable, consider_per_position=1, position_ignore=None) -> Generator[list[Player]]:
     """
-    Iterator that returns a set of possible next picks 
+    Iterator that returns a set of possible next picks
     - team_picks is list of remaining picks for to optimize for the team
     - roster is current roster
     - partable is the polars dataframe with player scoring/edp data
-    - consider_per_position is number of players to consider per position (sorted by PAR)
+    - consider_per_position is number of players to consider per position (sorted by PAR),
+        so 1 considers only the best available player at each position
     - position_ignore has a dictionary of positions to ignore
         key: position
         value: # of team picks to avoid positions for
+
+    Each combo is yielded as its own list, so callers can hold on to one (to track
+    the best roster so far) without it changing as the search continues.
     """
+    if consider_per_position < 1:
+        raise ValueError("consider_per_position must be at least 1")
+    if len(team_picks) == 0:
+        return
     not_drafted_df = subset_partable_not_on_roster(partable, roster).with_columns(pl.lit(False).alias("drafted"))
     selected_player_ranks:list[tuple[int,int]] = [] # first is pos #, second is k/# considered
     selected_players = []
@@ -250,45 +304,49 @@ def get_draft_combos(team_picks, roster, partable, consider_per_position=1, posi
     while True:
         while len(selected_players) < len(team_picks):
             # this block adds selections to selected_players
-            selected_player_ranks.append((0, 0))
             team_pick_num = len(selected_players)
-            overall_pick_num = team_picks[team_pick_num]
-            pos_to_draft = draftable_positions[team_pick_num][0]
-            # gets top player
-            top_player = get_player(overall_pick_num, pos_to_draft, 0, not_drafted_df)
+            selection = _next_selection(
+                team_pick_num, 0, 0, team_picks, draftable_positions, not_drafted_df
+            )
+            if selection is None:
+                # no player can fill this pick, so back up and try another branch
+                break
+            (top_player, pos_id, pos_rank) = selection
+            selected_player_ranks.append((pos_id, pos_rank))
             selected_players.append(top_player)
             # sets their status to drafted
             not_drafted_df = set_player_draft_status(top_player, True, not_drafted_df)
 
-        yield selected_players
+        if len(selected_players) == len(team_picks):
+            # copy so the caller keeps this combo even as we mutate ours
+            yield list(selected_players)
 
         while True:
+            if len(selected_players) == 0:
+                # no more players to iterate for the first pick, so we're done
+                return
             last_player:Player = selected_players.pop()
             # mark them undrafted
             not_drafted_df = set_player_draft_status(last_player, False, not_drafted_df)
             (pos_id, pos_rank) = selected_player_ranks.pop()
             team_pick_num = len(selected_players)
+            pos_rank += 1
             if pos_rank >= consider_per_position:
-                # in this case we move to next position
+                # considered enough at this position, so move to the next one
                 pos_id += 1
                 pos_rank = 0
-            else:
-                pos_rank += 1
-            if pos_id >= len(draftable_positions[team_pick_num]):
-                # in this case we've exhausted positions to draft at this pick
+            selection = _next_selection(
+                team_pick_num, pos_id, pos_rank, team_picks, draftable_positions, not_drafted_df
+            )
+            if selection is None:
+                # exhausted the positions to draft at this pick, so back up further
                 continue
             # otherwise we add next player to pick
+            (top_player, pos_id, pos_rank) = selection
             selected_player_ranks.append((pos_id, pos_rank))
-            overall_pick_num = team_picks[team_pick_num]
-            pos_to_draft = draftable_positions[team_pick_num][pos_id]
-            top_player = get_player(overall_pick_num, pos_to_draft, pos_rank, not_drafted_df)
             selected_players.append(top_player)
             # set status to drafted
             not_drafted_df = set_player_draft_status(top_player, True, not_drafted_df)
-            break
-                
-        # if there are no more players to iterate for first pick, exit
-        if len(selected_players) == 0:
             break
 
 
