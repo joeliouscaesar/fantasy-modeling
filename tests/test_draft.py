@@ -13,7 +13,7 @@ from fantasy.draft import (
     get_flex_players,
     get_player,
     get_starting_games,
-    modified_ppg,
+    modified_par,
     set_player_draft_status,
     subset_partable_not_on_roster,
 )
@@ -23,16 +23,18 @@ from fantasy.draft import (
 #############################################################
 
 def make_player(
-    expected_points_per_game: float = 10.0,
+    par_per_game: float = 10.0,
     expected_games_played: float = 17.0,
+    par_per_game_flex: float = 8.0,
     bye: int = 7,
     name: str = "Player",
     position: str = "TE",
 ) -> Player:
     """Build a Player with sensible defaults so tests only state what they care about."""
     return Player(
-        expected_points_per_game,
+        par_per_game,
         expected_games_played,
+        par_per_game_flex,
         bye,
         name,
         position,
@@ -47,75 +49,75 @@ def test_only_player_at_position_can_start_every_week():
 def test_backup_only_starts_during_the_starters_bye():
     # One starting spot, already held by a higher-PAR player who plays all but
     # their bye week. The backup should inherit exactly that one week.
-    starter = make_player(expected_points_per_game=20.0, expected_games_played=17.0, bye=7, name="Starter")
-    backup = make_player(expected_points_per_game=10.0, expected_games_played=17.0, bye=12, name="Backup")
+    starter = make_player(par_per_game=20.0, expected_games_played=17.0, bye=7, name="Starter")
+    backup = make_player(par_per_game=10.0, expected_games_played=17.0, bye=12, name="Backup")
 
     assert get_starting_games(backup, [starter], 1) == 1
 
 def test_no_available_but_different_bye():
     # from gross standpoint there are no available spots, but all share the same bye so a player 
     # has an available start
-    drafted_players = [make_player(expected_points_per_game=11,bye=7), make_player(expected_points_per_game=11,bye=7), make_player(expected_points_per_game=11, bye=7)]
-    new_player = make_player(expected_points_per_game=8, bye=12)
+    drafted_players = [make_player(par_per_game=11,bye=7), make_player(par_per_game=11,bye=7), make_player(par_per_game=11, bye=7)]
+    new_player = make_player(par_per_game=8, bye=12)
     assert get_starting_games(new_player, drafted_players, 2) == 1
 
 def test_better_player_starts_fully():
-    drafted_players = [make_player(expected_points_per_game=1, bye=8), make_player(expected_points_per_game=2, bye=12)]
-    new_player = make_player(expected_points_per_game=10, expected_games_played=4)
+    drafted_players = [make_player(par_per_game=1, bye=8), make_player(par_per_game=2, bye=12)]
+    new_player = make_player(par_per_game=10, expected_games_played=4)
     assert get_starting_games(new_player, drafted_players, 1) == 4
 
 def test_actually_two_available():
     # have 3 available spots from gross standpoint but only one bc share same bye
     drafted_players = [
-        make_player(expected_points_per_game=8, expected_games_played=11),
-        make_player(expected_points_per_game=4, expected_games_played=11),
-        make_player(expected_points_per_game=2, expected_games_played=11)
+        make_player(par_per_game=8, expected_games_played=11),
+        make_player(par_per_game=4, expected_games_played=11),
+        make_player(par_per_game=2, expected_games_played=11)
     ]
-    new_player = make_player(expected_points_per_game=1, bye=8)
+    new_player = make_player(par_per_game=1, bye=8)
     assert get_starting_games(new_player, drafted_players, 2) == 2
 
 def test_actually_one_available():
     # have no spots from gross standpoint, but they all share same bye
     drafted_players = [
-        make_player(expected_points_per_game=8, expected_games_played=11),
-        make_player(expected_points_per_game=4, expected_games_played=11),
-        make_player(expected_points_per_game=2, expected_games_played=11),
-        make_player(expected_points_per_game=1.5, expected_games_played=11)
+        make_player(par_per_game=8, expected_games_played=11),
+        make_player(par_per_game=4, expected_games_played=11),
+        make_player(par_per_game=2, expected_games_played=11),
+        make_player(par_per_game=1.5, expected_games_played=11)
     ]
-    new_player = make_player(expected_points_per_game=1, bye=8)
+    new_player = make_player(par_per_game=1, bye=8)
     assert get_starting_games(new_player, drafted_players, 2) == 1
 
 def test_skips_worse_players():
     # have no spots from gross standpoint, but they all share same bye
     drafted_players = [
-        make_player(expected_points_per_game=8, expected_games_played=11),
-        make_player(expected_points_per_game=4, expected_games_played=11),
-        make_player(expected_points_per_game=2, expected_games_played=11),
-        make_player(expected_points_per_game=1.5, expected_games_played=11)
+        make_player(par_per_game=8, expected_games_played=11),
+        make_player(par_per_game=4, expected_games_played=11),
+        make_player(par_per_game=2, expected_games_played=11),
+        make_player(par_per_game=1.5, expected_games_played=11)
     ]
-    new_player = make_player(expected_points_per_game=3, bye=8, expected_games_played=9)
+    new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
     assert get_starting_games(new_player, drafted_players, 2) == 9
 
 def test_skips_worse_players2():
     # have no spots from gross standpoint, but they all share same bye
     drafted_players = [
-        make_player(expected_points_per_game=8, expected_games_played=10),
-        make_player(expected_points_per_game=4, expected_games_played=10),
-        make_player(expected_points_per_game=3.5, expected_games_played=10),
-        make_player(expected_points_per_game=1.5, expected_games_played=11)
+        make_player(par_per_game=8, expected_games_played=10),
+        make_player(par_per_game=4, expected_games_played=10),
+        make_player(par_per_game=3.5, expected_games_played=10),
+        make_player(par_per_game=1.5, expected_games_played=11)
     ]
-    new_player = make_player(expected_points_per_game=3, bye=8, expected_games_played=9)
+    new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
     assert get_starting_games(new_player, drafted_players, 2) == 5
 
 def test_skips_worse_players3():
     # have no spots from gross standpoint, but they all share same bye
     drafted_players = [
-        make_player(expected_points_per_game=8, expected_games_played=10),
-        make_player(expected_points_per_game=4, expected_games_played=10),
-        make_player(expected_points_per_game=3.5, expected_games_played=10, bye=8),
-        make_player(expected_points_per_game=1.5, expected_games_played=11)
+        make_player(par_per_game=8, expected_games_played=10),
+        make_player(par_per_game=4, expected_games_played=10),
+        make_player(par_per_game=3.5, expected_games_played=10, bye=8),
+        make_player(par_per_game=1.5, expected_games_played=11)
     ]
-    new_player = make_player(expected_points_per_game=3, bye=8, expected_games_played=9)
+    new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
     assert get_starting_games(new_player, drafted_players, 2) == 6
 
 #############################################################
@@ -137,48 +139,48 @@ def test_empty_roster():
     assert get_flex_players(roster) == []
 
 def test_all_rbs():
-    # test that only rb3 is a flex player, their expected_points_per_game and expected_games_played are adjusted
+    # test that only rb3 is a flex player, their par_per_game and expected_games_played are adjusted
     roster = make_roster()
-    rb1 = make_player(expected_points_per_game=10, position="RB", bye=1, expected_games_played=17)
-    rb2 = make_player(expected_points_per_game=9, position="RB", bye=2, expected_games_played=17)
-    rb3 = make_player(expected_points_per_game=8, position="RB", bye=3, expected_games_played=17)
+    rb1 = make_player(par_per_game=10, position="RB", bye=1)
+    rb2 = make_player(par_per_game=9, position="RB", bye=2)
+    rb3 = make_player(par_per_game=8, par_per_game_flex=6, position="RB", bye=3)
     roster.drafted["RB"] = [rb1, rb2, rb3]
     roster.drafted["RB"].sort(reverse=True)
-    rb3_flex = make_player(expected_points_per_game=8, position="FLEX", bye=3,expected_games_played=15)
+    rb3_flex = make_player(par_per_game=6, par_per_game_flex=6, position="FLEX", bye=3,expected_games_played=15)
     assert get_flex_players(roster) == [rb3_flex]
 
 def test_all_multiple_pos():
     # test that rb3 + wr3 are flex players
     roster = make_roster()
-    rb1 = make_player(expected_points_per_game=10, position="RB", bye=1)
-    rb2 = make_player(expected_points_per_game=9, position="RB", bye=2)
-    rb3 = make_player(expected_points_per_game=8, position="RB", bye=3, name="flex1")
-    wr1 = make_player(expected_points_per_game=10, position="WR", bye=1)
-    wr2 = make_player(expected_points_per_game=9, position="WR", bye=2)
-    wr3 = make_player(expected_points_per_game=7, position="WR", bye=3, name="flex2")
+    rb1 = make_player(par_per_game=10, position="RB", bye=1)
+    rb2 = make_player(par_per_game=9, position="RB", bye=2)
+    rb3 = make_player(par_per_game=8, par_per_game_flex=6, position="RB", bye=3, name="flex1")
+    wr1 = make_player(par_per_game=10, position="WR", bye=1)
+    wr2 = make_player(par_per_game=9, position="WR", bye=2)
+    wr3 = make_player(par_per_game=7, par_per_game_flex=5, position="WR", bye=3, name="flex2")
     roster.drafted["RB"] = [rb1, rb2, rb3]
     roster.drafted["RB"].sort(reverse=True)
     roster.drafted["WR"] = [wr1, wr2, wr3]
     roster.drafted["WR"].sort(reverse=True)
-    rb3_flex = make_player(expected_points_per_game=8, position="FLEX", bye=3,expected_games_played=15, name="flex1")
-    wr3_flex = make_player(expected_points_per_game=7,  position="FLEX", bye=3,expected_games_played=15, name="flex2")
+    rb3_flex = make_player(par_per_game=6, par_per_game_flex=6, position="FLEX", bye=3,expected_games_played=15, name="flex1")
+    wr3_flex = make_player(par_per_game=5, par_per_game_flex=5, position="FLEX", bye=3,expected_games_played=15, name="flex2")
     assert get_flex_players(roster) == [rb3_flex, wr3_flex]
 
 def test_all_multiple_pos2():
     # same as above but change output order
     roster = make_roster()
-    rb1 = make_player(expected_points_per_game=10, position="RB", bye=1)
-    rb2 = make_player(expected_points_per_game=9, position="RB", bye=2)
-    rb3 = make_player(expected_points_per_game=7,position="RB", bye=3, name="flex1")
-    wr1 = make_player(expected_points_per_game=10, position="WR", bye=1)
-    wr2 = make_player(expected_points_per_game=9, position="WR", bye=2)
-    wr3 = make_player(expected_points_per_game=8,  position="WR", bye=3, name="flex2")
+    rb1 = make_player(par_per_game=10, position="RB", bye=1)
+    rb2 = make_player(par_per_game=9, position="RB", bye=2)
+    rb3 = make_player(par_per_game=7, par_per_game_flex=5, position="RB", bye=3, name="flex1")
+    wr1 = make_player(par_per_game=10, position="WR", bye=1)
+    wr2 = make_player(par_per_game=9, position="WR", bye=2)
+    wr3 = make_player(par_per_game=8, par_per_game_flex=6, position="WR", bye=3, name="flex2")
     roster.drafted["RB"] = [rb1, rb2, rb3]
     roster.drafted["RB"].sort(reverse=True)
     roster.drafted["WR"] = [wr1, wr2, wr3]
     roster.drafted["WR"].sort(reverse=True)
-    rb3_flex = make_player(expected_points_per_game=7,position="FLEX", bye=3,expected_games_played=15, name="flex1")
-    wr3_flex = make_player(expected_points_per_game=8, position="FLEX", bye=3,expected_games_played=15, name="flex2")
+    rb3_flex = make_player(par_per_game=5, par_per_game_flex=5, position="FLEX", bye=3,expected_games_played=15, name="flex1")
+    wr3_flex = make_player(par_per_game=6, par_per_game_flex=6, position="FLEX", bye=3,expected_games_played=15, name="flex2")
     assert get_flex_players(roster) == [wr3_flex, rb3_flex]
 
 def test_other_pos():
@@ -268,7 +270,7 @@ def roster_with(*players: Player) -> Roster:
 # A player who is not in any test partable. Needed because
 # subset_partable_not_on_roster raises on a genuinely empty roster (see the xfail
 # test below), and most tests here care about other behaviour.
-SENTINEL = Player(0.0, 16.0, 1, "NotInTable", "QB")
+SENTINEL = Player(0.0, 16.0, 0.0, 1, "NotInTable", "QB")
 
 
 def drafted_frame(partable: pl.DataFrame) -> pl.DataFrame:
@@ -282,7 +284,7 @@ def drafted_frame(partable: pl.DataFrame) -> pl.DataFrame:
 
 def test_subset_removes_rostered_players():
     partable = simple_partable()
-    roster = roster_with(Player(10.0, 16.0, 1, "RB1", "RB"))
+    roster = roster_with(Player(10.0, 16.0, 5.0, 1, "RB1", "RB"))
 
     remaining = subset_partable_not_on_roster(partable, roster)
 
@@ -292,7 +294,7 @@ def test_subset_removes_rostered_players():
 
 def test_subset_keeps_partable_columns_and_drops_join_flag():
     partable = simple_partable()
-    roster = roster_with(Player(10.0, 16.0, 1, "RB1", "RB"))
+    roster = roster_with(Player(10.0, 16.0, 5.0, 1, "RB1", "RB"))
 
     remaining = subset_partable_not_on_roster(partable, roster)
 
@@ -306,7 +308,7 @@ def test_subset_matches_on_player_and_position_together():
         make_raw_row("Ambiguous", "RB", 20),
         make_raw_row("Ambiguous", "WR", 18),
     ])
-    roster = roster_with(Player(10.0, 16.0, 1, "Ambiguous", "RB"))
+    roster = roster_with(Player(10.0, 16.0, 5.0, 1, "Ambiguous", "RB"))
 
     remaining = subset_partable_not_on_roster(partable, roster)
 
@@ -316,7 +318,7 @@ def test_subset_matches_on_player_and_position_together():
 
 def test_subset_does_not_mutate_the_input():
     partable = simple_partable()
-    roster = roster_with(Player(10.0, 16.0, 1, "RB1", "RB"))
+    roster = roster_with(Player(10.0, 16.0, 5.0, 1, "RB1", "RB"))
     before = partable.height
 
     subset_partable_not_on_roster(partable, roster)
@@ -412,8 +414,9 @@ def test_get_player_maps_partable_columns_onto_player_fields():
 
     assert player.name == "Target"
     assert player.position == "RB"
-    assert player.expected_points_per_game == row["expected_points_per_game"]
+    assert player.par_per_game == row["par_per_game"]
     assert player.expected_games_played == row["expected_games_played"]
+    assert player.par_per_game_flex == row["flex_par_per_game"]
     assert player.bye == row["bye"]
 
 
@@ -535,7 +538,7 @@ def test_draft_combos_only_drafts_allowed_positions():
 
 
 def test_draft_combos_excludes_players_already_on_the_roster():
-    roster = roster_with(SENTINEL, Player(10.0, 16.0, 1, "RB1", "RB"))
+    roster = roster_with(SENTINEL, Player(10.0, 16.0, 5.0, 1, "RB1", "RB"))
     combos = collect_combos(
         get_draft_combos([0, 1], roster, simple_partable(),
                          consider_per_position=1, position_ignore=ONLY_RB_WR)
@@ -599,7 +602,7 @@ def test_draft_combos_can_track_the_best_combo_by_par():
     # A caller should be able to keep the running best without copying defensively.
     combos = get_draft_combos([0, 1], roster_with(SENTINEL), simple_partable(),
                               consider_per_position=1, position_ignore=ONLY_RB_WR)
-    best = max(combos, key=lambda combo: sum(p.expected_points_per_game * p.expected_games_played for p in combo))
+    best = max(combos, key=lambda combo: sum(p.par_per_game * p.expected_games_played for p in combo))
     assert [p.name for p in best] == ["RB1", "RB2"]
 
 
