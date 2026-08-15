@@ -1,4 +1,6 @@
 
+from dataclasses import FrozenInstanceError
+
 import polars as pl
 import pytest
 
@@ -624,3 +626,59 @@ def test_draft_combos_rejects_consider_per_position_below_one():
 
 def test_draft_combos_with_no_remaining_picks_yields_nothing():
     assert list(get_draft_combos([], roster_with(SENTINEL), simple_partable())) == []
+
+
+#############################################################
+# Tests for Roster.copy and Player immutability
+#############################################################
+
+def test_roster_copy_does_not_share_position_lists():
+    # The reason copy() exists: branching the draft search must not leak picks back
+    # into the roster we branched from.
+    roster = make_roster()
+    roster.drafted["RB"].append(make_player(position="RB", name="Bijan"))
+
+    branch = roster.copy()
+    branch.drafted["RB"].append(make_player(position="RB", name="Gibbs"))
+
+    assert [p.name for p in roster.drafted["RB"]] == ["Bijan"]
+    assert [p.name for p in branch.drafted["RB"]] == ["Bijan", "Gibbs"]
+
+
+def test_roster_copy_covers_every_position():
+    # A missed position would share its list and silently corrupt the original.
+    roster = make_roster()
+    branch = roster.copy()
+    for position in roster.drafted:
+        assert branch.drafted[position] is not roster.drafted[position]
+
+
+def test_roster_copy_shares_player_objects():
+    # Deliberate: Players are frozen, so copying them would be pure overhead.
+    roster = make_roster()
+    roster.drafted["RB"].append(make_player(position="RB", name="Bijan"))
+
+    branch = roster.copy()
+
+    assert branch.drafted["RB"][0] is roster.drafted["RB"][0]
+
+
+def test_roster_copy_carries_over_config():
+    roster = make_roster()
+    branch = roster.copy()
+    assert branch.starting_positions == roster.starting_positions
+    assert branch.roster_size == roster.roster_size
+
+
+def test_player_cannot_be_mutated():
+    # What makes sharing Players between roster copies safe.
+    player = make_player()
+    with pytest.raises(FrozenInstanceError):
+        player.par_per_game = 99.0
+
+
+def test_player_is_hashable():
+    # Falls out of frozen=True, and lets callers dedupe combos with a set.
+    player = make_player(name="Bijan", position="RB")
+    same = make_player(name="Bijan", position="RB")
+    assert len({player, same}) == 1

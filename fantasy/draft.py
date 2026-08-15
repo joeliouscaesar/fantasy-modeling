@@ -32,7 +32,7 @@ ROSTER_SIZE = 15
 WEEKS = 18
 STARTING_POSITIONS = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
 
-@dataclass(slots=True,order=True)
+@dataclass(slots=True,order=True,frozen=True)
 class Player():
     par_per_game:float
     expected_games_played:float
@@ -58,6 +58,17 @@ class Roster():
         self.roster_size = roster_size
     def get_players(self) -> list[Player]:
         return self.drafted["QB"] + self.drafted["RB"] + self.drafted["WR"] + self.drafted["TE"] + self.drafted["K"] + self.drafted["DEF"]
+    def copy(self) -> Self:
+        """
+        Returns a roster that can be drafted to without affecting this one.
+
+        Each position list is copied, but the Players in them are shared rather than
+        duplicated. That is safe because Player is frozen, and it keeps branching the
+        draft search cheap enough to do per candidate combination.
+        """
+        new_roster = type(self)(self.starting_positions, self.roster_size)
+        new_roster.drafted = {pos: players.copy() for (pos, players) in self.drafted.items()}
+        return new_roster
 
 
 def get_starting_games(player:Player, drafted_list:list[Player], num_starters:int) -> float:
@@ -349,13 +360,26 @@ def get_draft_combos(team_picks, roster, partable, consider_per_position=1, posi
             not_drafted_df = set_player_draft_status(top_player, True, not_drafted_df)
             break
 
+def add_picks_to_roster(draft_combos:list[Player], roster:Roster) -> Roster:
+    """
+    Returns a new roster with players added
+    """
+    roster = roster.copy()
+    for player in draft_combos:
+        roster.drafted[player.position].append(player)
+        roster.drafted[player.position].sort(reverse=True)
+    return roster
+
+
+def roster_par(roster:Roster) -> float:
+    pass
 
 def best_draft_sequence(
         pick:int, 
         draft_order:list[int], 
         roster:Roster,
         partable:pl.DataFrame, 
-        k=1,
+        consider_per_position=1,
         bench_penalty=0.5,
         through_round=10,
         position_ignore={"K":10,"DEF":10}):
@@ -363,45 +387,11 @@ def best_draft_sequence(
     Best expected sequence for remaining picks
     """
     # get remaining picks for this team
-    # team_picks = get_team_remaining_picks(pick, draft_order)
-    # best_player_combo = []
-    # for player_combos in get_draft_combos(team_picks, roster, partable, consider_per_position=k, through_round=through_round, position_ignore=position_ignore):
-        # add players to roster
-        # assess value
-        # if best, save as best_player_combo
-
-    # # for each pick assess top k players in each position group for modified par
-    # for remaining_pick in team_picks:
-    #     for pos in ["QB","RB","WR","TE","DEF","K"]:
-    #         is_flex = pos in ["RB","WR","TE"]
-    #         pos_and_available = (pl.col("position") == pos) & (pl.col("drafted_after") >= remaining_pick)
-    #         # select top k players by par 
-    #         pos_df:pl.DataFrame = partable.filter(
-    #             pos_and_available
-    #         ).limit(
-    #             k
-    #         ).sort(
-    #             by="PAR",
-    #             descending=True
-    #         ).select(
-    #             [
-    #                 "par_per_game",
-    #                 "expected_games_played",
-    #                 "flex_par_per_game",
-    #                 "bye",
-    #                 "player",
-    #                 "position"
-    #             ]
-    #         )
-    #         pos_to_consider = [Player(*row) for row in pos_df.iter_rows()]
-    #         mpar = [modified_par(player, roster, bench_penalty, pos) for player in pos_to_consider]
-    #         if is_flex:
-    #             # consider their flex value
-    #             mpar_flex = [modified_par(player, roster, bench_penalty, "FLEX") for player in pos_to_consider]
-    #             mpar = [max(mp, mpf) for (mp, mpf) in zip(mpar, mpar_flex)]
-    #         best_index = mpar.index(max(mpar))
-    #         best_by_position.append(pos_to_consider[best_index])            
-    pass
+    team_picks = get_team_remaining_picks(pick, draft_order)
+    return max(
+        get_draft_combos(team_picks, roster, partable, consider_per_position, position_ignore),
+        key=lambda dc:roster_par(add_picks_to_roster(dc, roster))
+    )
 
 
 
