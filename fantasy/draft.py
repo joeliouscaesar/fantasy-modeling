@@ -34,9 +34,10 @@ STARTING_POSITIONS = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
 
 @dataclass(slots=True,order=True)
 class Player():
-    par_per_game:float
+    # par_per_game:float
+    expected_points_per_game:float
     expected_games_played:float
-    par_per_game_flex:float
+    # par_per_game_flex:float
     bye:int
     name:str
     position:str
@@ -102,20 +103,17 @@ def get_starting_games(player:Player, drafted_list:list[Player], num_starters:in
     expected_start = min(available_games, player.expected_games_played)
     return expected_start
 
-def modified_par(player:Player, roster:Roster, bench_penalty:float, position:str|None=None):
+def modified_ppg(player:Player, roster:Roster, bench_penalty:float, position:str|None=None):
     """
-    Calculates the modifed par for adding this player. Applies a simple bench_penalty
+    Calculates the modifed ppg for adding this player. Applies a simple bench_penalty
     if we don't project this player to be a starter. Accounts for bye's of players 
     who are already on the roster at this position.
     """
     position = player.position if position is None else position
     # return their modified par
     expected_start = get_starting_games(player, roster.drafted[position], roster.starting_positions[position])
-    starting_value = player.par_per_game * expected_start
-    if player.par_per_game >= 0:
-        bench_value = (player.expected_games_played - expected_start) * bench_penalty * player.par_per_game
-    else:
-        bench_value = (player.expected_games_played - expected_start) * player.par_per_game
+    starting_value = player.expected_points_per_game * expected_start
+    bench_value = (player.expected_games_played - expected_start) * bench_penalty * player.expected_points_per_game
     return (starting_value + bench_value)
 
 def get_flex_players(roster:Roster) -> list[Player]:
@@ -135,9 +133,8 @@ def get_flex_players(roster:Roster) -> list[Player]:
             if starting_games < player.expected_games_played:
                 # in this case add to flex player list
                 player_flex = Player(
-                    player.par_per_game_flex, # par_per_game is relative to flex players
+                    player.expected_points_per_game,
                     player.expected_games_played - starting_games, # reduce number of expected games available for flex
-                    player.par_per_game_flex,
                     player.bye, 
                     player.name,
                     "FLEX" # change position to FLEX
@@ -146,8 +143,6 @@ def get_flex_players(roster:Roster) -> list[Player]:
             players_iterated_over.append(player)
     flex_player_list.sort(reverse=True)
     return flex_player_list
-
-
 
 def make_draft_order() -> list[int]:
     """
@@ -171,7 +166,6 @@ def get_team_remaining_picks(pick:int, draft_order:list[int]) -> list[int]:
     return team_picks
 
 # def get_player(partable, position_rank, roster):
-
 def subset_partable_not_on_roster(partable:pl.DataFrame, roster:Roster) -> pl.DataFrame:
     subpartable = partable.clone()
     players_on_roster = roster.get_players()
@@ -215,9 +209,10 @@ def get_available_players(overall_pick_num, position, not_drafted_df) -> pl.Data
 
 def _player_from_row(row:dict) -> Player:
     return Player(
-        row["par_per_game"],
+        row["expected_points_per_game"],
+        # row["par_per_game"],
         row["expected_games_played"],
-        row["flex_par_per_game"],
+        # row["flex_par_per_game"],
         row["bye"],
         row["player"],
         row["position"]
@@ -349,7 +344,6 @@ def get_draft_combos(team_picks, roster, partable, consider_per_position=1, posi
             not_drafted_df = set_player_draft_status(top_player, True, not_drafted_df)
             break
 
-
 def best_draft_sequence(
         pick:int, 
         draft_order:list[int], 
@@ -406,8 +400,8 @@ def best_draft_sequence(
 
 
 
-# import polars as pl
-# partable = pl.read_csv("outputs/par_table.csv")
+import polars as pl
+partable = pl.read_csv("outputs/par_table.csv")
 # k = 5
 # pos = "QB"
 
