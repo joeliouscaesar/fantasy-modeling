@@ -371,8 +371,37 @@ def add_picks_to_roster(draft_combos:list[Player], roster:Roster) -> Roster:
     return roster
 
 
-def roster_par(roster:Roster) -> float:
-    pass
+def roster_par(roster:Roster,bench_penalty=0.5) -> float:
+    total_par = 0.0
+    flex_players:list[Player] = []
+    for pos in ["QB", "RB", "WR", "TE", "DEF", "K"]:
+        pos_players:list[Player] = roster.drafted[pos]
+        for (i, player) in enumerate(pos_players):
+            other_drafted = pos_players[:i] + pos_players[i+1:]
+            expected_start = get_starting_games(player, other_drafted, roster.starting_positions[player.position])
+            total_par += player.par_per_game * expected_start # add starting value for this player at position
+            if pos in ["RB","WR","TE"] and (expected_start < player.expected_games_played):
+                flex_players.append(
+                    Player(
+                        player.par_per_game,
+                        player.expected_games_played - expected_start,
+                        player.par_per_game_flex,
+                        player.bye,
+                        player.name,
+                        "FLEX"
+                    )
+                )
+            else:
+                total_par += (player.expected_games_played - expected_start) * player.par_per_game * bench_penalty
+    # now go through flex players
+    flex_players.sort(reverse=True)
+    for (i, player) in enumerate(flex_players):
+        other_drafted = flex_players[:i] + flex_players[i+1:]
+        expected_start = get_starting_games(player, other_drafted, roster.starting_positions["FLEX"])
+        # add their flex starting/bench values
+        total_par += player.par_per_game_flex * expected_start # add starting value for this player at FLEX
+        total_par += (player.expected_games_played - expected_start) * player.par_per_game_flex * bench_penalty
+    return total_par
 
 def best_draft_sequence(
         pick:int, 
@@ -388,12 +417,12 @@ def best_draft_sequence(
     """
     # get remaining picks for this team
     team_picks = get_team_remaining_picks(pick, draft_order)
+    rounds_left = through_round - len(roster.get_players())
+    team_picks = team_picks[:rounds_left]
     return max(
         get_draft_combos(team_picks, roster, partable, consider_per_position, position_ignore),
-        key=lambda dc:roster_par(add_picks_to_roster(dc, roster))
+        key=lambda dc:roster_par(add_picks_to_roster(dc, roster), bench_penalty=bench_penalty)
     )
-
-
 
 
 # import polars as pl
