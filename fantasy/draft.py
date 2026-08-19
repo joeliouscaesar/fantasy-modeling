@@ -32,6 +32,7 @@ ROSTER_SIZE = 15
 WEEKS = 18
 STARTING_POSITIONS = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
 
+
 @dataclass(slots=True,order=True,frozen=True)
 class Player():
     par_per_game:float
@@ -429,6 +430,79 @@ def best_draft_sequence(
         key=lambda dc:roster_par(add_picks_to_roster(dc, roster), bench_penalty=bench_penalty),
         default=[]
     )
+
+def get_position_priority(position:str, roster:Roster) -> int:
+    """
+    Returns the priority for drafting a player at a given position
+    - 0 is high priority, player could start
+    - 1 is lower, would fill first bench spot (except kickers/def)
+    - 2 is lowest, second bench spot and beyond
+    """
+    drafted_less_starting = len(roster.drafted[position]) - STARTING_POSITIONS[position]
+    if drafted_less_starting < 0:
+        # highest priority
+        return 0
+    if position in ["RB", "WR", "TE"]:
+        # if we have an open flex spot, priority 0
+        flexes_open = STARTING_POSITIONS["FLEX"]
+        for pos in ["RB","WR","TE"]:
+            flexes_open = flexes_open - max(0, len(roster.drafted[pos]) - STARTING_POSITIONS[pos])
+        if flexes_open > 0:
+            return 0
+    if (position not in ["K","DEF"]) and (drafted_less_starting <= 1):
+        # first bench priority 1
+        return 1
+    else:
+        return 2
+        
+
+def make_draft_position_pick(
+    roster:Roster,
+    partable:pl.DataFrame,
+    kicker_min_round:int) -> tuple[str, str]:
+    """
+    Function which picks a player based on their expected draft position and 
+    the position priority based on roster construction. Returns (player name, position) pair.
+
+    Prioritize higher priority position (lowest int), and then expected draft position
+    for equal priorities
+    """ 
+    round = len(roster.get_players()) + 1
+    priorities:dict[str,int] = {pos:get_position_priority(pos, roster) for pos in ["QB","RB","WR","TE","DEF","K"]}
+    highest_priority = min(priorities.values())
+    priority_positions = [pos for (pos, priority) in priorities.items() if priority == highest_priority]
+    lowest_adp_player:dict = partable.filter(
+        pl.col("position").is_in(priority_positions)
+    ).sort(
+        by=["drafted_after"]
+    ).head(1).row(0, named=True)
+    return (lowest_adp_player["player"], lowest_adp_player["position"])
+
+
+def full_draft(
+        draft_order:list[int],
+        partable:pl.DataFrame,
+        bench_penalty:float,
+        best_draft_sequence_teams:list[int],
+        position_ignore:dict[str,int],
+        optim_split:None|int
+        ) -> pl.DataFrame:
+    """
+     runs through the draft, for each team either drafting per the best_draft_sequence
+     or a simplified process using highest expected draft position of players available 
+     
+     Returns a dataframe with a columns for the player picked, position, and pick number
+     
+     Params:
+     - optim_split is round where we should break up the optimization, so best sequence for first 
+        10 picks, then next 5 or something for the best_draft_sequence_teams
+    """
+    pass
+
+
+
+
+
 
 
 # import polars as pl
