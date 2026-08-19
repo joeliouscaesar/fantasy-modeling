@@ -10,12 +10,16 @@ from fantasy.draft import (
     WEEKS,
     Player,
     Roster,
+    add_picks_to_roster,
+    best_draft_sequence,
     get_draft_combos,
     get_draftable_positions,
     get_flex_players,
     get_player,
     get_starting_games,
+    get_team_remaining_picks,
     modified_par,
+    roster_par,
     set_player_draft_status,
     subset_partable_not_on_roster,
 )
@@ -682,3 +686,159 @@ def test_player_is_hashable():
     player = make_player(name="Bijan", position="RB")
     same = make_player(name="Bijan", position="RB")
     assert len({player, same}) == 1
+
+#############################################################
+# Tests for best_draft_sequence
+#############################################################
+
+# Two-team snake over two rounds: team 0 picks at 0 and 3, team 1 at 1 and 2.
+SNAKE_ORDER = [0, 1, 1, 0]
+
+
+def rb_wr_partable() -> pl.DataFrame:
+    """Four players where the best WR out-scores the best RB.
+
+    PAR: WR1 176 > RB1 160 > WR2 144 > RB2 128, so a sequence that just took the
+    alphabetically-first position would pick the wrong player.
+    """
+    return make_partable([
+        make_raw_row("RB1", "RB", 20, bye=1), make_raw_row("RB2", "RB", 18, bye=2),
+        make_raw_row("WR1", "WR", 21, bye=3), make_raw_row("WR2", "WR", 19, bye=4),
+    ])
+
+
+def score(combo: list[Player], roster: Roster, bench_penalty: float = 0.5) -> float:
+    """PAR of `roster` once `combo` is added -- the quantity being maximised."""
+    return roster_par(add_picks_to_roster(combo, roster), bench_penalty=bench_penalty)
+
+
+def test_best_draft_sequence_takes_the_highest_par_player_available():
+    # One pick, so the best sequence is simply the best player on the board.
+    best = best_draft_sequence(0, SNAKE_ORDER, make_roster(), rb_wr_partable(),
+                               through_round=1, position_ignore=ONLY_RB_WR)
+    assert [player.name for player in best] == ["WR1"]
+
+
+def test_best_draft_sequence_maximises_roster_par():
+    roster, partable = make_roster(), rb_wr_partable()
+    picks = get_team_remaining_picks(0, SNAKE_ORDER)[:2]
+    every_combo = list(get_draft_combos(picks, roster, partable, 1, ONLY_RB_WR))
+
+    best = best_draft_sequence(0, SNAKE_ORDER, roster, partable,
+                               through_round=2, position_ignore=ONLY_RB_WR)
+
+    assert score(best, roster) == max(score(combo, roster) for combo in every_combo)
+
+
+def test_best_draft_sequence_returns_one_player_per_planned_pick():
+    best = best_draft_sequence(0, SNAKE_ORDER, make_roster(), rb_wr_partable(),
+                               through_round=2, position_ignore=ONLY_RB_WR)
+    assert len(best) == 2
+
+
+def test_best_draft_sequence_plans_fewer_picks_as_through_round_shrinks():
+    partable = rb_wr_partable()
+    one = best_draft_sequence(0, SNAKE_ORDER, make_roster(), partable,
+                              through_round=1, position_ignore=ONLY_RB_WR)
+    two = best_draft_sequence(0, SNAKE_ORDER, make_roster(), partable,
+                              through_round=2, position_ignore=ONLY_RB_WR)
+    assert (len(one), len(two)) == (1, 2)
+
+
+def test_best_draft_sequence_counts_rostered_players_towards_through_round():
+    # One player already drafted, so through_round=2 leaves room for one more pick.
+    roster = roster_with(SENTINEL)
+    best = best_draft_sequence(0, SNAKE_ORDER, roster, rb_wr_partable(),
+                               through_round=2, position_ignore=ONLY_RB_WR)
+    assert len(best) == 1
+
+
+def test_best_draft_sequence_does_not_mutate_the_roster():
+    roster = make_roster()
+    before = {position: list(players) for (position, players) in roster.drafted.items()}
+
+    best_draft_sequence(0, SNAKE_ORDER, roster, rb_wr_partable(),
+                        through_round=2, position_ignore=ONLY_RB_WR)
+
+    assert roster.drafted == before
+
+
+def test_best_draft_sequence_does_not_redraft_a_rostered_player():
+    rb1 = Player(10.0, 16.0, 10.0, 1, "RB1", "RB")
+    roster = roster_with(SENTINEL, rb1)
+
+    best = best_draft_sequence(0, SNAKE_ORDER, roster, rb_wr_partable(),
+                               through_round=4, position_ignore=ONLY_RB_WR)
+
+    assert "RB1" not in [player.name for player in best]
+
+
+def test_best_draft_sequence_respects_position_ignore():
+    best = best_draft_sequence(0, SNAKE_ORDER, make_roster(), rb_wr_partable(),
+                               through_round=2,
+                               position_ignore={"WR": 99, "QB": 99, "TE": 99, "K": 99, "DEF": 99})
+    assert {player.position for player in best} == {"RB"}
+
+
+def test_best_draft_sequence_skips_players_gone_before_the_pick():
+    # WR1 is the best player, but is projected off the board before pick 0.
+    partable = make_partable([
+        make_raw_row("RB1", "RB", 20, bye=1),
+        make_raw_row("WR1", "WR", 21, bye=3, adp_overall_rank=0),
+    ])
+    best = best_draft_sequence(0, SNAKE_ORDER, make_roster(), partable,
+                               through_round=1, position_ignore=ONLY_RB_WR)
+    assert [player.name for player in best] == ["RB1"]
+
+
+def test_best_draft_sequence_widening_the_search_never_scores_worse():
+    # consider_per_position=2 enumerates a superset of the k=1 combos.
+    roster, partable = make_roster(), simple_partable()
+    narrow = best_draft_sequence(0, SNAKE_ORDER, roster, partable,
+                                 consider_per_position=1, through_round=2,
+                                 position_ignore=ONLY_RB_WR)
+    wide = best_draft_sequence(0, SNAKE_ORDER, roster, partable,
+                               consider_per_position=2, through_round=2,
+                               position_ignore=ONLY_RB_WR)
+    assert score(wide, roster) >= score(narrow, roster)
+
+
+def test_best_draft_sequence_bench_penalty_changes_the_pick():
+    """A bench-bound star beats a modest starter only when benches count fully.
+
+    RB3 has the higher PAR but no route into the lineup: RB and FLEX are already
+    taken. TE1 scores less but starts every week. At bench_penalty=0.5 the starter
+    wins; at 1.0 the bench points are worth enough to flip it.
+    """
+    starting_positions = {"QB": 1, "RB": 1, "WR": 1, "TE": 1, "FLEX": 1, "K": 1, "DEF": 1}
+    partable = make_partable([
+        make_raw_row("RB3", "RB", 25, bye=3),  # PAR 240, but bench-bound
+        make_raw_row("TE1", "TE", 20, bye=5),  # PAR 160, starts outright
+    ])
+    ignore = {"QB": 99, "WR": 99, "K": 99, "DEF": 99}
+
+    def best_at(bench_penalty: float) -> list[str]:
+        roster = Roster(starting_positions, 15)
+        roster.drafted["RB"] = [Player(20.0, 16.0, 20.0, 1, "RBstar", "RB"),
+                                Player(16.0, 16.0, 16.0, 2, "RBflex", "RB")]
+        roster.drafted["WR"] = [Player(18.0, 16.0, 18.0, 4, "WRstar", "WR")]
+        best = best_draft_sequence(0, SNAKE_ORDER, roster, partable, through_round=4,
+                                   bench_penalty=bench_penalty, position_ignore=ignore)
+        return [player.name for player in best]
+
+    assert best_at(0.5) == ["TE1"]
+    assert best_at(1.0) == ["RB3"]
+
+
+def test_best_draft_sequence_with_no_rounds_left_returns_no_picks():
+    roster = roster_with(SENTINEL, Player(10.0, 16.0, 10.0, 1, "Other", "RB"))
+    assert best_draft_sequence(0, SNAKE_ORDER, roster, rb_wr_partable(),
+                               through_round=2, position_ignore=ONLY_RB_WR) == []
+
+
+def test_best_draft_sequence_past_through_round_returns_no_picks():
+    roster = roster_with(SENTINEL,
+                         Player(10.0, 16.0, 10.0, 1, "Other", "RB"),
+                         Player(9.0, 16.0, 9.0, 2, "Another", "RB"))
+    assert best_draft_sequence(0, SNAKE_ORDER, roster, rb_wr_partable(),
+                               through_round=2, position_ignore=ONLY_RB_WR) == []

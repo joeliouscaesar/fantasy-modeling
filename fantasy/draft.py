@@ -411,17 +411,23 @@ def best_draft_sequence(
         consider_per_position=1,
         bench_penalty=0.5,
         through_round=10,
-        position_ignore={"K":10,"DEF":10}):
+        position_ignore={"K":10,"DEF":10}) -> list[Player]:
     """
     Best expected sequence for remaining picks
+
+    Returns an empty list when the roster has already reached through_round.
     """
     # get remaining picks for this team
     team_picks = get_team_remaining_picks(pick, draft_order)
-    rounds_left = through_round - len(roster.get_players())
+    # clamp at 0 so a roster already past through_round plans nothing. a negative
+    # rounds_left would slice picks off the end of the list instead of emptying it
+    rounds_left = max(through_round - len(roster.get_players()), 0)
     team_picks = team_picks[:rounds_left]
+    # default covers there being no picks left to plan, where max would otherwise raise
     return max(
         get_draft_combos(team_picks, roster, partable, consider_per_position, position_ignore),
-        key=lambda dc:roster_par(add_picks_to_roster(dc, roster), bench_penalty=bench_penalty)
+        key=lambda dc:roster_par(add_picks_to_roster(dc, roster), bench_penalty=bench_penalty),
+        default=[]
     )
 
 
