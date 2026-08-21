@@ -26,6 +26,8 @@ import polars as pl
 from dataclasses import dataclass
 from typing import Self
 from collections.abc import Generator
+from collections import defaultdict
+from typing import Optional
 
 NUM_TEAMS = 12
 ROSTER_SIZE = 15
@@ -438,20 +440,24 @@ def get_position_priority(position:str, roster:Roster) -> int:
     - 1 is lower, would fill first bench spot (except kickers/def)
     - 2 is lowest, second bench spot and beyond
     """
-    drafted_less_starting = len(roster.drafted[position]) - STARTING_POSITIONS[position]
+    drafted_less_starting = len(roster.drafted[position]) - roster.starting_positions[position]
+    is_flex = position in ["RB", "WR", "TE"]
     if drafted_less_starting < 0:
         # highest priority
         return 0
-    if position in ["RB", "WR", "TE"]:
-        # if we have an open flex spot, priority 0
-        flexes_open = STARTING_POSITIONS["FLEX"]
+    # if we have an open flex spot, priority 0
+    flexes_open = roster.starting_positions["FLEX"]
+    if is_flex:
         for pos in ["RB","WR","TE"]:
-            flexes_open = flexes_open - max(0, len(roster.drafted[pos]) - STARTING_POSITIONS[pos])
+            flexes_open = flexes_open - max(0, len(roster.drafted[pos]) - roster.starting_positions[pos])
         if flexes_open > 0:
-            return 0
-    if (position not in ["K","DEF"]) and (drafted_less_starting <= 1):
+            return 0    
+    if (position not in ["K","DEF"]) and (drafted_less_starting == 0):
         # first bench priority 1
         return 1
+    # elif is_flex and (flexes_open == 0):
+    #     # backup flex we value at 1
+    #     return 1
     else:
         return 2
         
@@ -459,7 +465,8 @@ def get_position_priority(position:str, roster:Roster) -> int:
 def make_draft_position_pick(
     roster:Roster,
     partable:pl.DataFrame,
-    kicker_min_round:int) -> tuple[str, str]:
+    kicker_min_round:int,
+    def_min_round:int) -> Optional[tuple[str, str]]:
     """
     Function which picks a player based on their expected draft position and 
     the position priority based on roster construction. Returns (player name, position) pair.
@@ -468,15 +475,43 @@ def make_draft_position_pick(
     for equal priorities
     """ 
     round = len(roster.get_players()) + 1
-    priorities:dict[str,int] = {pos:get_position_priority(pos, roster) for pos in ["QB","RB","WR","TE","DEF","K"]}
-    highest_priority = min(priorities.values())
-    priority_positions = [pos for (pos, priority) in priorities.items() if priority == highest_priority]
-    lowest_adp_player:dict = partable.filter(
-        pl.col("position").is_in(priority_positions)
-    ).sort(
-        by=["drafted_after"]
-    ).head(1).row(0, named=True)
-    return (lowest_adp_player["player"], lowest_adp_player["position"])
+    pos_priorities:dict[int, list[str]] = defaultdict(list)
+    for pos in ["QB","RB","WR","TE"]:
+        pos_priority = get_position_priority(pos, roster)
+        pos_priorities[pos_priority].append(pos)
+
+    min_priority = min(pos_priorities.keys())
+    max_priority = max(pos_priorities.keys())
+
+    def_priority = get_position_priority("DEF", roster) if round >= def_min_round else max_priority + 1
+    pos_priorities[def_priority].append("DEF")
+
+    k_priority = get_position_priority("K", roster) if round >= kicker_min_round else max_priority + 1
+    pos_priorities[k_priority].append("K")
+    
+    for priority in range(min_priority, max_priority + 2):
+        highest_priority_pos = pos_priorities.get(priority, None)
+        if highest_priority_pos is None:
+            continue
+        lowest_adp_player:pl.DataFrame = partable.filter(
+            pl.col("position").is_in(highest_priority_pos)
+        ).sort(
+            by=["drafted_after"]
+        ).head(1)
+
+        # check if players
+        if lowest_adp_player.shape[0] == 0:
+            continue
+
+        lowest_adp_player_d:dict = lowest_adp_player.row(0, named=True)
+        return (lowest_adp_player_d["player"], lowest_adp_player_d["position"])
+
+    return None
+
+            
+
+
+
 
 
 def full_draft(

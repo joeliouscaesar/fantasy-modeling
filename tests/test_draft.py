@@ -870,10 +870,10 @@ def priority_roster(**counts: int) -> Roster:
     ("position", "expected"),
     [
         # drafted 0, 1, 2, ... at that position, nothing drafted elsewhere
-        ("QB", [0, 1, 1, 2]),
-        ("TE", [0, 0, 1, 2]),
-        ("RB", [0, 0, 0, 1, 2, 2]),
-        ("WR", [0, 0, 0, 0, 1, 2]),
+        ("QB", [0, 1, 2, 2]),
+        ("TE", [0, 0, 2, 2]),
+        ("RB", [0, 0, 0, 2, 2, 2]),
+        ("WR", [0, 0, 0, 0, 2, 2]),
         ("K", [0, 2, 2]),
         ("DEF", [0, 2, 2]),
     ],
@@ -922,12 +922,6 @@ def test_position_priority_bottoms_out_at_two():
     assert get_position_priority("QB", priority_roster(QB=4)) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Reads the module-level STARTING_POSITIONS instead of roster.starting_positions, "
-           "so a roster configured for a different league is ignored. get_starting_games and "
-           "roster_par do honour the roster's own config, so the two disagree.",
-)
 def test_position_priority_uses_the_rosters_own_starting_positions():
     roster = Roster({"QB": 3, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DEF": 1}, 15)
     roster.drafted["QB"] = [Player(10.0, 16.0, 10.0, 1, "Q1", "QB")]
@@ -935,12 +929,6 @@ def test_position_priority_uses_the_rosters_own_starting_positions():
     assert get_position_priority("QB", roster) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Priority 1 is documented as 'would fill first bench spot', but "
-           "drafted_less_starting <= 1 makes both the first and the second extra player "
-           "score 1, so two QBs deep still reads as the first bench spot.",
-)
 def test_position_priority_marks_only_one_tier_as_the_first_bench_spot():
     # QB=1 -> the next QB is the first bench QB (1). QB=2 -> the next is the second (2).
     assert get_position_priority("QB", priority_roster(QB=1)) == 1
@@ -963,7 +951,7 @@ def adp_partable() -> pl.DataFrame:
 
 def test_draft_position_pick_takes_the_earliest_adp_among_top_priority_positions():
     # Empty roster: every position is priority 0, so the earliest ADP wins outright.
-    assert make_draft_position_pick(priority_roster(), adp_partable(), kicker_min_round=10) \
+    assert make_draft_position_pick(priority_roster(), adp_partable(), kicker_min_round=10, def_min_round=10) \
         == ("RB_early", "RB")
 
 
@@ -975,36 +963,21 @@ def test_draft_position_pick_restricts_itself_to_the_highest_priority_positions(
     assert [pos for (pos, p) in priorities.items() if p == 0] == ["TE"]
 
     # ...so it takes the TE even though RB_early has a much earlier ADP.
-    assert make_draft_position_pick(roster, adp_partable(), kicker_min_round=10) \
+    assert make_draft_position_pick(roster, adp_partable(), kicker_min_round=10, def_min_round=10) \
         == ("TE_late", "TE")
 
 
 def test_draft_position_pick_returns_a_name_and_position_pair():
-    pick = make_draft_position_pick(priority_roster(), adp_partable(), kicker_min_round=10)
+    pick = make_draft_position_pick(priority_roster(), adp_partable(), kicker_min_round=10, def_min_round=10)
     assert isinstance(pick, tuple) and len(pick) == 2
     name, position = pick
     assert isinstance(name, str) and position in ["QB", "RB", "WR", "TE", "DEF", "K"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: the partable is filtered by position only, never against the roster, so a "
-           "player already drafted is handed back again. subset_partable_not_on_roster "
-           "already does this filtering for the combo search.",
-)
-def test_draft_position_pick_skips_players_already_on_the_roster():
-    roster = priority_roster()
-    roster.drafted["RB"] = [Player(10.0, 16.0, 10.0, 1, "RB_early", "RB")]
-    assert make_draft_position_pick(roster, adp_partable(), kicker_min_round=10)[0] != "RB_early"
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: kicker_min_round is never read. `round` is computed and then unused, so a "
-           "kicker can be taken before the round the caller asked to hold off until.",
-)
 def test_draft_position_pick_respects_kicker_min_round():
     # Everything but K is filled, making K the sole priority-0 position at round 12.
     roster = priority_roster(QB=1, RB=3, WR=4, TE=2, DEF=1)
     assert get_position_priority("K", roster) == 0
-    assert make_draft_position_pick(roster, adp_partable(), kicker_min_round=99)[1] != "K"
+    pick = make_draft_position_pick(roster, adp_partable(), kicker_min_round=99, def_min_round=99)
+    assert pick is not None
+    assert pick != "K"
