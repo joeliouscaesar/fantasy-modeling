@@ -24,10 +24,11 @@
 
 import polars as pl
 from dataclasses import dataclass
-from typing import Self
+from typing import Any, Self
 from collections.abc import Generator
 from collections import defaultdict
 from typing import Optional
+from typing import Callable
 
 NUM_TEAMS = 12
 ROSTER_SIZE = 15
@@ -72,7 +73,10 @@ class Roster():
         new_roster = type(self)(self.starting_positions, self.roster_size)
         new_roster.drafted = {pos: players.copy() for (pos, players) in self.drafted.items()}
         return new_roster
-
+    def add_player(self, player:Player):
+        self.drafted[player.position].append(player)
+        self.drafted[player.position].sort(reverse=True)
+        return
 
 def get_starting_games(player:Player, drafted_list:list[Player], num_starters:int) -> float:
     """
@@ -513,31 +517,66 @@ def make_priority_based_pick(
 
     return None
 
-            
-
-
-
-
 
 def full_draft(
-        draft_order:list[int],
         partable:pl.DataFrame,
-        bench_penalty:float,
-        best_draft_sequence_teams:list[int],
-        position_ignore:dict[str,int],
-        optim_split:None|int
+        strategies:dict[int, Callable]
         ) -> pl.DataFrame:
     """
      runs through the draft, for each team either drafting per the best_draft_sequence
      or a simplified process using highest expected draft position of players available 
      
-     Returns a dataframe with a columns for the player picked, position, and pick number
+     Returns a dataframe with a columns for the player picked, position, pick number, and team id
      
      Params:
-     - optim_split is round where we should break up the optimization, so best sequence for first 
-        10 picks, then next 5 or something for the best_draft_sequence_teams
+     - draft_order is the full list of draft picks with the values being which team is picking there
+     - partable is the dataframe with player information
+     - strategies
+        dictionary of functions used by each team for picking players.
+        all strategy functions should map from 
+
+        (
+            pick:int, 
+            team_id:int,
+            draft_order:list[int], 
+            remaining_players:pl.DataFrame, 
+            rosters:list[Roster]
+        ) -> tuple[player, position]
+
     """
-    pass
+    remaining_players = partable.clone()
+    rosters = [Roster(STARTING_POSITIONS, ROSTER_SIZE) for _ in range(NUM_TEAMS)]
+    draft_order = make_draft_order()
+    drafted_tuples:list[tuple[str,str,int,int]] = []
+    for (pick, team_id) in enumerate(draft_order):
+        strategy = strategies[team_id]
+        (player, position) = strategy(pick, team_id, draft_order, remaining_players, rosters)
+        drafted_tuples.append((player, position,pick+1,team_id))
+
+        # get drafted player
+        drafted_player_df:pl.DataFrame = remaining_players.filter(
+            (pl.col("player") == player) & (pl.col("position") == position)
+        )
+        assert drafted_player_df.shape[0] == 1
+        drafted_player:Player = _player_from_row(drafted_player_df.row(0, named=True))
+        rosters[team_id].add_player(drafted_player)
+
+        # remove from remaining players
+        remaining_players = remaining_players.filter(
+            ~((pl.col("player") == player) & (pl.col("position") == position))
+        )
+    # prepare output df
+    outputdf = pl.DataFrame(drafted_tuples, schema={
+        "player":pl.String,
+        "position":pl.String,
+        "pick_number":pl.Int64,
+        "team_id":pl.Int64
+    }, orient="row")
+    return outputdf
+
+
+
+    
 
 
 

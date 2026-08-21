@@ -25,6 +25,7 @@ from fantasy.draft import (
     roster_par,
     set_player_draft_status,
     subset_partable_not_on_roster,
+    full_draft
 )
 
 #############################################################
@@ -993,4 +994,42 @@ def test_draft_priority_switches_to_par():
     roster = priority_roster(WR=4)
     pick = make_priority_based_pick(roster, adp_partable(), "PAR", True, kicker_min_round=0, def_min_round=0)
     assert pick == ("RB_early","RB")
+
+#############################################################
+# Tests for full_draft
+#############################################################
+
+def test_full_draft_highest_expected_draft_strategy():
+    """
+    Tests if we pick players based on their expected drafte position that we align
+    """
+    partable = prepare_partable(
+        pl.read_csv("outputs/par_table.csv")
+    )
+
+    def only_strategy(
+        pick:int,
+        team_id:int,
+        draft_order:list[int],
+        remaining_players:pl.DataFrame,
+        rosters:list[Roster]
+    ) -> tuple[str, str]:
+        player_to_draft = remaining_players.sort("drafted_after").row(0, named=True)
+        return (player_to_draft["player"], player_to_draft["position"])
+
+    draft = full_draft(partable, {i:only_strategy for i in range(NUM_TEAMS)})
+
+    from_partable = partable.sort(
+        "drafted_after"
+    ).select(
+        pl.col("player").alias("_player"),
+        pl.col("position").alias("_position"), 
+        (pl.row_index() + 1).alias("expected_pick_number")
+    ).head(NUM_TEAMS*ROSTER_SIZE)
+
+    both = draft.join(from_partable, left_on="pick_number", right_on="expected_pick_number", how="full")
+
+    assert both.shape[0] == NUM_TEAMS*ROSTER_SIZE
+    assert (both["player"] == both["_player"]).all()
+    assert (both["position"] == both["_position"]).all()
 
