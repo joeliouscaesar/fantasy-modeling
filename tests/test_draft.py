@@ -5,9 +5,6 @@ import polars as pl
 import pytest
 
 from fantasy.draft import (
-    NUM_TEAMS,
-    ROSTER_SIZE,
-    WEEKS,
     Player,
     Roster,
     add_picks_to_roster,
@@ -18,15 +15,20 @@ from fantasy.draft import (
     get_player,
     get_starting_games,
     get_team_remaining_picks,
-    STARTING_POSITIONS,
     get_position_priority,
     make_priority_based_pick,
     modified_par,
     roster_par,
     set_player_draft_status,
     subset_partable_not_on_roster,
-    full_draft
+    full_draft,
+    make_draft_order
 )
+
+NUM_TEAMS = 12
+ROSTER_SIZE = 15
+WEEKS = 18
+STARTING_POSITIONS = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
 
 #############################################################
 # Tests for get_starting_games
@@ -53,7 +55,7 @@ def make_player(
 
 def test_only_player_at_position_can_start_every_week():
     player = make_player()
-    assert get_starting_games(player, [], 1) == player.expected_games_played
+    assert get_starting_games(player, [], 1, WEEKS) == player.expected_games_played
 
 
 def test_backup_only_starts_during_the_starters_bye():
@@ -62,19 +64,19 @@ def test_backup_only_starts_during_the_starters_bye():
     starter = make_player(par_per_game=20.0, expected_games_played=17.0, bye=7, name="Starter")
     backup = make_player(par_per_game=10.0, expected_games_played=17.0, bye=12, name="Backup")
 
-    assert get_starting_games(backup, [starter], 1) == 1
+    assert get_starting_games(backup, [starter], 1, WEEKS) == 1
 
 def test_no_available_but_different_bye():
     # from gross standpoint there are no available spots, but all share the same bye so a player 
     # has an available start
     drafted_players = [make_player(par_per_game=11,bye=7), make_player(par_per_game=11,bye=7), make_player(par_per_game=11, bye=7)]
     new_player = make_player(par_per_game=8, bye=12)
-    assert get_starting_games(new_player, drafted_players, 2) == 1
+    assert get_starting_games(new_player, drafted_players, 2, WEEKS) == 1
 
 def test_better_player_starts_fully():
     drafted_players = [make_player(par_per_game=1, bye=8), make_player(par_per_game=2, bye=12)]
     new_player = make_player(par_per_game=10, expected_games_played=4)
-    assert get_starting_games(new_player, drafted_players, 1) == 4
+    assert get_starting_games(new_player, drafted_players, 1, WEEKS) == 4
 
 def test_actually_two_available():
     # have 3 available spots from gross standpoint but only one bc share same bye
@@ -84,7 +86,7 @@ def test_actually_two_available():
         make_player(par_per_game=2, expected_games_played=11)
     ]
     new_player = make_player(par_per_game=1, bye=8)
-    assert get_starting_games(new_player, drafted_players, 2) == 2
+    assert get_starting_games(new_player, drafted_players, 2, WEEKS) == 2
 
 def test_actually_one_available():
     # have no spots from gross standpoint, but they all share same bye
@@ -95,7 +97,7 @@ def test_actually_one_available():
         make_player(par_per_game=1.5, expected_games_played=11)
     ]
     new_player = make_player(par_per_game=1, bye=8)
-    assert get_starting_games(new_player, drafted_players, 2) == 1
+    assert get_starting_games(new_player, drafted_players, 2, WEEKS) == 1
 
 def test_skips_worse_players():
     # have no spots from gross standpoint, but they all share same bye
@@ -106,7 +108,7 @@ def test_skips_worse_players():
         make_player(par_per_game=1.5, expected_games_played=11)
     ]
     new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
-    assert get_starting_games(new_player, drafted_players, 2) == 9
+    assert get_starting_games(new_player, drafted_players, 2, WEEKS) == 9
 
 def test_skips_worse_players2():
     # have no spots from gross standpoint, but they all share same bye
@@ -117,7 +119,7 @@ def test_skips_worse_players2():
         make_player(par_per_game=1.5, expected_games_played=11)
     ]
     new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
-    assert get_starting_games(new_player, drafted_players, 2) == 5
+    assert get_starting_games(new_player, drafted_players, 2, WEEKS) == 5
 
 def test_skips_worse_players3():
     # have no spots from gross standpoint, but they all share same bye
@@ -128,7 +130,7 @@ def test_skips_worse_players3():
         make_player(par_per_game=1.5, expected_games_played=11)
     ]
     new_player = make_player(par_per_game=3, bye=8, expected_games_played=9)
-    assert get_starting_games(new_player, drafted_players, 2) == 6
+    assert get_starting_games(new_player, drafted_players, 2, WEEKS) == 6
 
 #############################################################
 # Tests for get_flex_players
@@ -233,7 +235,7 @@ def make_raw_row(
     }
 
 
-def prepare_partable(raw: pl.DataFrame) -> pl.DataFrame:
+def prepare_partable(raw: pl.DataFrame, num_teams: int = 12, roster_size: int = 15) -> pl.DataFrame:
     """Mirror of the partable prep sketched at the bottom of fantasy/draft.py.
 
     Adds flex_par_per_game, renames DST -> DEF, and derives drafted_after from ADP.
@@ -249,7 +251,7 @@ def prepare_partable(raw: pl.DataFrame) -> pl.DataFrame:
         .then(pl.lit("DEF"))
         .otherwise(pl.col("position"))
         .alias("position"),
-        (pl.col("adp_overall_rank").fill_null(NUM_TEAMS * ROSTER_SIZE + 1) - 1).alias("drafted_after"),
+        (pl.col("adp_overall_rank").fill_null(num_teams * roster_size + 1) - 1).alias("drafted_after"),
     )
 
 
@@ -1017,7 +1019,7 @@ def test_full_draft_highest_expected_draft_strategy():
         player_to_draft = remaining_players.sort("drafted_after").row(0, named=True)
         return (player_to_draft["player"], player_to_draft["position"])
 
-    draft = full_draft(partable, {i:only_strategy for i in range(NUM_TEAMS)})
+    draft = full_draft(partable, {i:only_strategy for i in range(NUM_TEAMS)}, num_teams=NUM_TEAMS, roster_size=ROSTER_SIZE, starting_positions=STARTING_POSITIONS)
 
     from_partable = partable.sort(
         "drafted_after"

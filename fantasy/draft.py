@@ -30,11 +30,6 @@ from collections import defaultdict
 from typing import Optional
 from typing import Callable
 
-NUM_TEAMS = 12
-ROSTER_SIZE = 15
-WEEKS = 18
-STARTING_POSITIONS = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
-
 
 @dataclass(slots=True,order=True,frozen=True)
 class Player():
@@ -78,7 +73,7 @@ class Roster():
         self.drafted[player.position].sort(reverse=True)
         return
 
-def get_starting_games(player:Player, drafted_list:list[Player], num_starters:int) -> float:
+def get_starting_games(player:Player, drafted_list:list[Player], num_starters:int, weeks:int = 18) -> float:
     """
     Function that gets the number of games a player can start at a specified position.
 
@@ -86,10 +81,10 @@ def get_starting_games(player:Player, drafted_list:list[Player], num_starters:in
 
     The bye logic is complicated but the thought is the following:
     - the number of spots needed to be filled in a week is (# starters - (# drafted - # with bye that week))
-    - if a player does not have a bye that week, that week can count for exactly one starting spot, the accumulation of these 
+    - if a player does not have a bye that week, that week can count for exactly one starting spot, the accumulation of these
         weeks is a lower bound on available starting games for that player
     - on the other hand, if a player also has that bye, they can't fill any of those open spots, or if there is more than one
-        open spot, they can only fill one. therefore we have to have a downward correction on available games by 
+        open spot, they can only fill one. therefore we have to have a downward correction on available games by
 
         (# starters - (# drafted - # with bye that week)) - (players bye is different week)
     """
@@ -105,7 +100,7 @@ def get_starting_games(player:Player, drafted_list:list[Player], num_starters:in
         bye_counts[drafted_player.bye] = bye_counts.get(drafted_player.bye, 0) + 1
         games_covered += drafted_player.expected_games_played
     # calculate available games
-    available_games = num_starters * WEEKS - games_covered
+    available_games = num_starters * weeks - games_covered
     spots_from_bye_overlap = 0
     excess_spots_same_week = 0
     for (bye, count) in bye_counts.items():
@@ -120,15 +115,15 @@ def get_starting_games(player:Player, drafted_list:list[Player], num_starters:in
     expected_start = min(available_games, player.expected_games_played)
     return expected_start
 
-def modified_par(player:Player, roster:Roster, bench_penalty:float, position:str|None=None):
+def modified_par(player:Player, roster:Roster, bench_penalty:float, position:str|None=None, weeks:int = 18):
     """
     Calculates the modifed par for adding this player. Applies a simple bench_penalty
-    if we don't project this player to be a starter. Accounts for bye's of players 
+    if we don't project this player to be a starter. Accounts for bye's of players
     who are already on the roster at this position.
     """
     position = player.position if position is None else position
     # return their modified par
-    expected_start = get_starting_games(player, roster.drafted[position], roster.starting_positions[position])
+    expected_start = get_starting_games(player, roster.drafted[position], roster.starting_positions[position], weeks)
     starting_value = player.par_per_game * expected_start
     if player.par_per_game >= 0:
         bench_value = (player.expected_games_played - expected_start) * bench_penalty * player.par_per_game
@@ -136,10 +131,10 @@ def modified_par(player:Player, roster:Roster, bench_penalty:float, position:str
         bench_value = (player.expected_games_played - expected_start) * player.par_per_game
     return (starting_value + bench_value)
 
-def get_flex_players(roster:Roster) -> list[Player]:
+def get_flex_players(roster:Roster, weeks:int = 18) -> list[Player]:
     """
-    Function that given a roster, determines which players 
-    are likely to be flex players. Used to assess flex player 
+    Function that given a roster, determines which players
+    are likely to be flex players. Used to assess flex player
     modified PAR
     """
     positions = ["RB","WR","TE"]
@@ -149,7 +144,7 @@ def get_flex_players(roster:Roster) -> list[Player]:
         players_iterated_over = []
         num_starters = roster.starting_positions[pos]
         for player in drafted_players:
-            starting_games = get_starting_games(player, players_iterated_over, num_starters)
+            starting_games = get_starting_games(player, players_iterated_over, num_starters, weeks)
             if starting_games < player.expected_games_played:
                 # in this case add to flex player list
                 player_flex = Player(
@@ -167,15 +162,15 @@ def get_flex_players(roster:Roster) -> list[Player]:
 
 
 
-def make_draft_order() -> list[int]:
+def make_draft_order(num_teams: int = 12, roster_size: int = 15) -> list[int]:
     """
     Returns a snake pick order as a list
     """
     draft_order = []
-    teams = [team for team in range(NUM_TEAMS)]
+    teams = [team for team in range(num_teams)]
     reverse_teams = teams.copy()
     reverse_teams.reverse()
-    for round in range(ROSTER_SIZE):
+    for round in range(roster_size):
         if round % 2 == 0:
             draft_order += teams
         else:
@@ -378,14 +373,14 @@ def add_picks_to_roster(draft_combos:list[Player], roster:Roster) -> Roster:
     return roster
 
 
-def roster_par(roster:Roster,bench_penalty=0.5) -> float:
+def roster_par(roster:Roster, bench_penalty=0.5, weeks:int = 18) -> float:
     total_par = 0.0
     flex_players:list[Player] = []
     for pos in ["QB", "RB", "WR", "TE", "DEF", "K"]:
         pos_players:list[Player] = roster.drafted[pos]
         for (i, player) in enumerate(pos_players):
             other_drafted = pos_players[:i] + pos_players[i+1:]
-            expected_start = get_starting_games(player, other_drafted, roster.starting_positions[player.position])
+            expected_start = get_starting_games(player, other_drafted, roster.starting_positions[player.position], weeks)
             total_par += player.par_per_game * expected_start # add starting value for this player at position
             if pos in ["RB","WR","TE"] and (expected_start < player.expected_games_played):
                 flex_players.append(
@@ -404,21 +399,22 @@ def roster_par(roster:Roster,bench_penalty=0.5) -> float:
     flex_players.sort(reverse=True)
     for (i, player) in enumerate(flex_players):
         other_drafted = flex_players[:i] + flex_players[i+1:]
-        expected_start = get_starting_games(player, other_drafted, roster.starting_positions["FLEX"])
+        expected_start = get_starting_games(player, other_drafted, roster.starting_positions["FLEX"], weeks)
         # add their flex starting/bench values
         total_par += player.par_per_game_flex * expected_start # add starting value for this player at FLEX
         total_par += (player.expected_games_played - expected_start) * player.par_per_game_flex * bench_penalty
     return total_par
 
 def best_draft_sequence(
-        pick:int, 
-        draft_order:list[int], 
+        pick:int,
+        draft_order:list[int],
         roster:Roster,
-        partable:pl.DataFrame, 
+        partable:pl.DataFrame,
         consider_per_position=1,
         bench_penalty=0.5,
         through_round=10,
-        position_ignore={"K":10,"DEF":10}) -> list[Player]:
+        position_ignore={"K":10,"DEF":10},
+        weeks:int = 18) -> list[Player]:
     """
     Best expected sequence for remaining picks
 
@@ -433,7 +429,7 @@ def best_draft_sequence(
     # default covers there being no picks left to plan, where max would otherwise raise
     return max(
         get_draft_combos(team_picks, roster, partable, consider_per_position, position_ignore),
-        key=lambda dc:roster_par(add_picks_to_roster(dc, roster), bench_penalty=bench_penalty),
+        key=lambda dc:roster_par(add_picks_to_roster(dc, roster), bench_penalty=bench_penalty, weeks=weeks),
         default=[]
     )
 
@@ -520,33 +516,39 @@ def make_priority_based_pick(
 
 def full_draft(
         partable:pl.DataFrame,
-        strategies:dict[int, Callable]
+        strategies:dict[int, Callable],
+        num_teams: int = 12,
+        roster_size: int = 15,
+        starting_positions: dict[str, int] | None = None
         ) -> pl.DataFrame:
     """
      runs through the draft, for each team either drafting per the best_draft_sequence
-     or a simplified process using highest expected draft position of players available 
-     
+     or a simplified process using highest expected draft position of players available
+
      Returns a dataframe with a columns for the player picked, position, pick number, and team id
-     
+
      Params:
      - draft_order is the full list of draft picks with the values being which team is picking there
      - partable is the dataframe with player information
      - strategies
         dictionary of functions used by each team for picking players.
-        all strategy functions should map from 
+        all strategy functions should map from
 
         (
-            pick:int, 
+            pick:int,
             team_id:int,
-            draft_order:list[int], 
-            remaining_players:pl.DataFrame, 
+            draft_order:list[int],
+            remaining_players:pl.DataFrame,
             rosters:list[Roster]
         ) -> tuple[player, position]
 
     """
+    if starting_positions is None:
+        starting_positions = {"QB":1,"WR":3,"RB":2,"TE":1,"FLEX":1,"K":1,"DEF":1}
+
     remaining_players = partable.clone()
-    rosters = [Roster(STARTING_POSITIONS, ROSTER_SIZE) for _ in range(NUM_TEAMS)]
-    draft_order = make_draft_order()
+    rosters = [Roster(starting_positions, roster_size) for _ in range(num_teams)]
+    draft_order = make_draft_order(num_teams, roster_size)
     drafted_tuples:list[tuple[str,str,int,int]] = []
     for (pick, team_id) in enumerate(draft_order):
         strategy = strategies[team_id]
