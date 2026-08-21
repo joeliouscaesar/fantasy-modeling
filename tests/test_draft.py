@@ -17,6 +17,7 @@ from fantasy.draft import (
     get_starting_games,
     get_team_remaining_picks,
     make_priority_based_pick,
+    prepare_partable,
     roster_par,
     set_player_draft_status,
     subset_partable_not_on_roster,
@@ -307,33 +308,6 @@ def make_raw_row(
         "adp_delta": 0.0,
         "bye": bye,
     }
-
-
-def prepare_partable(
-    raw: pl.DataFrame, num_teams: int = 12, roster_size: int = 15
-) -> pl.DataFrame:
-    """Mirror of the partable prep sketched at the bottom of fantasy/draft.py.
-
-    Adds flex_par_per_game, renames DST -> DEF, and derives drafted_after from ADP.
-    """
-    is_flex = pl.col("position").is_in(["RB", "WR", "TE"])
-    flex_replacement_value = raw.filter(is_flex).select("replacement_ppg").max()
-    return raw.with_columns(
-        pl.when(is_flex)
-        .then(
-            pl.col("expected_points_per_game")
-            - flex_replacement_value["replacement_ppg"]
-        )
-        .otherwise(pl.lit(None))
-        .alias("flex_par_per_game"),
-        pl.when(pl.col("position") == "DST")
-        .then(pl.lit("DEF"))
-        .otherwise(pl.col("position"))
-        .alias("position"),
-        (pl.col("adp_overall_rank").fill_null(num_teams * roster_size + 1) - 1).alias(
-            "drafted_after"
-        ),
-    )
 
 
 def make_partable(rows: list[dict]) -> pl.DataFrame:

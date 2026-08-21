@@ -222,6 +222,38 @@ def get_team_remaining_picks(pick: int, draft_order: list[int]) -> list[int]:
 # def get_player(partable, position_rank, roster):
 
 
+def prepare_partable(
+    raw: pl.DataFrame, num_teams: int = 12, roster_size: int = 15
+) -> pl.DataFrame:
+    """
+    Prepares a par table from build_par.py for use by the draft functions.
+
+    - adds flex_par_per_game, PAR per game relative to the flex replacement level
+    - renames DST to DEF, which is how Roster keys the position
+    - derives drafted_after, the last pick a player is expected to last until
+
+    Players with no ADP are treated as available for the whole draft.
+    """
+    is_flex = pl.col("position").is_in(["RB", "WR", "TE"])
+    flex_replacement_value = raw.filter(is_flex).select("replacement_ppg").max()
+    return raw.with_columns(
+        pl.when(is_flex)
+        .then(
+            pl.col("expected_points_per_game")
+            - flex_replacement_value["replacement_ppg"]
+        )
+        .otherwise(pl.lit(None))
+        .alias("flex_par_per_game"),
+        pl.when(pl.col("position") == "DST")
+        .then(pl.lit("DEF"))
+        .otherwise(pl.col("position"))
+        .alias("position"),
+        (pl.col("adp_overall_rank").fill_null(num_teams * roster_size + 1) - 1).alias(
+            "drafted_after"
+        ),
+    )
+
+
 def subset_partable_not_on_roster(
     partable: pl.DataFrame, roster: Roster
 ) -> pl.DataFrame:
@@ -705,35 +737,3 @@ def full_draft(
         orient="row",
     )
     return outputdf
-
-
-# import polars as pl
-# partable = pl.read_csv("outputs/par_table.csv")
-# k = 5
-# pos = "QB"
-
-
-# is_flex = pl.col("position").is_in(["RB","WR","TE"])
-# flex_replacement_value = partable.filter(
-#     is_flex
-# ).select(
-#     "replacement_ppg"
-# ).max()
-
-# partable = partable.with_columns(
-#     pl.when(is_flex).then(
-#         pl.col("expected_points_per_game") - flex_replacement_value["replacement_ppg"]
-#     ).otherwise(
-#         pl.lit(None)
-#     ).alias("flex_par_per_game"),
-
-#     pl.when(pl.col("position") == "DST").then(
-#         pl.lit("DEF")
-#     ).otherwise(
-#         pl.col("position")
-#     ).alias("position"),
-
-#     (pl.col("adp_overall_rank").fill_null(NUM_TEAMS*ROSTER_SIZE + 1) - 1).alias("drafted_after")
-# )
-
-# assert partable[["player","position"]].n_unique() == partable.shape[0]
