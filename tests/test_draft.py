@@ -20,7 +20,7 @@ from fantasy.draft import (
     get_team_remaining_picks,
     STARTING_POSITIONS,
     get_position_priority,
-    make_draft_position_pick,
+    make_priority_based_pick,
     modified_par,
     roster_par,
     set_player_draft_status,
@@ -936,7 +936,7 @@ def test_position_priority_marks_only_one_tier_as_the_first_bench_spot():
 
 
 #############################################################
-# Tests for make_draft_position_pick
+# Tests for make_priority_based_pick
 #############################################################
 
 def adp_partable() -> pl.DataFrame:
@@ -949,13 +949,13 @@ def adp_partable() -> pl.DataFrame:
     ])
 
 
-def test_draft_position_pick_takes_the_earliest_adp_among_top_priority_positions():
+def test_draft_priority_pick_takes_the_earliest_adp_among_top_priority_positions():
     # Empty roster: every position is priority 0, so the earliest ADP wins outright.
-    assert make_draft_position_pick(priority_roster(), adp_partable(), kicker_min_round=10, def_min_round=10) \
+    assert make_priority_based_pick(priority_roster(), adp_partable(),"drafted_after",False,kicker_min_round=10, def_min_round=10) \
         == ("RB_early", "RB")
 
 
-def test_draft_position_pick_restricts_itself_to_the_highest_priority_positions():
+def test_draft_priority_pick_restricts_itself_to_the_highest_priority_positions():
     # Everything except TE is filled past its starters, so TE is the only priority 0.
     roster = priority_roster(QB=1, RB=3, WR=4, DEF=1, K=1)
     priorities = {pos: get_position_priority(pos, roster) for pos in ["QB", "RB", "WR", "TE", "DEF", "K"]}
@@ -963,21 +963,34 @@ def test_draft_position_pick_restricts_itself_to_the_highest_priority_positions(
     assert [pos for (pos, p) in priorities.items() if p == 0] == ["TE"]
 
     # ...so it takes the TE even though RB_early has a much earlier ADP.
-    assert make_draft_position_pick(roster, adp_partable(), kicker_min_round=10, def_min_round=10) \
+    assert make_priority_based_pick(roster, adp_partable(), "drafted_after", False, kicker_min_round=10, def_min_round=10) \
         == ("TE_late", "TE")
 
 
-def test_draft_position_pick_returns_a_name_and_position_pair():
-    pick = make_draft_position_pick(priority_roster(), adp_partable(), kicker_min_round=10, def_min_round=10)
+def test_draft_priority_pick_returns_a_name_and_position_pair():
+    pick = make_priority_based_pick(priority_roster(), adp_partable(), "drafted_after", False, kicker_min_round=10, def_min_round=10)
     assert isinstance(pick, tuple) and len(pick) == 2
     name, position = pick
     assert isinstance(name, str) and position in ["QB", "RB", "WR", "TE", "DEF", "K"]
 
 
-def test_draft_position_pick_respects_kicker_min_round():
+def test_draft_priority_pick_respects_kicker_min_round():
     # Everything but K is filled, making K the sole priority-0 position at round 12.
     roster = priority_roster(QB=1, RB=3, WR=4, TE=2, DEF=1)
     assert get_position_priority("K", roster) == 0
-    pick = make_draft_position_pick(roster, adp_partable(), kicker_min_round=99, def_min_round=99)
+    pick = make_priority_based_pick(roster, adp_partable(), "drafted_after", False, kicker_min_round=99, def_min_round=99)
     assert pick is not None
     assert pick != "K"
+
+def test_draft_priority_switches_to_par_pg():
+    # Draft WR first because their PAR is better
+    roster = priority_roster()
+    pick = make_priority_based_pick(roster, adp_partable(), "par_per_game", True, kicker_min_round=0, def_min_round=0)
+    assert pick == ("WR_mid","WR")
+
+def test_draft_priority_switches_to_par():
+    # Draft WR first because their PAR is better
+    roster = priority_roster(WR=4)
+    pick = make_priority_based_pick(roster, adp_partable(), "PAR", True, kicker_min_round=0, def_min_round=0)
+    assert pick == ("RB_early","RB")
+

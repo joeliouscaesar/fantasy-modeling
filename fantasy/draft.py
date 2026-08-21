@@ -462,9 +462,11 @@ def get_position_priority(position:str, roster:Roster) -> int:
         return 2
         
 
-def make_draft_position_pick(
+def make_priority_based_pick(
     roster:Roster,
     partable:pl.DataFrame,
+    criteria_col:str,
+    criteria_sort_descending:bool,
     kicker_min_round:int,
     def_min_round:int) -> Optional[tuple[str, str]]:
     """
@@ -474,6 +476,9 @@ def make_draft_position_pick(
     Prioritize higher priority position (lowest int), and then expected draft position
     for equal priorities
     """ 
+    if criteria_col not in partable.columns:
+        raise Exception(f"criteria_col {criteria_col} not found in partable")
+
     round = len(roster.get_players()) + 1
     pos_priorities:dict[int, list[str]] = defaultdict(list)
     for pos in ["QB","RB","WR","TE"]:
@@ -496,7 +501,7 @@ def make_draft_position_pick(
         lowest_adp_player:pl.DataFrame = partable.filter(
             pl.col("position").is_in(highest_priority_pos)
         ).sort(
-            by=["drafted_after"]
+            by=[criteria_col], descending=criteria_sort_descending
         ).head(1)
 
         # check if players
