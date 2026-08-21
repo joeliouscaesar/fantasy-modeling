@@ -634,6 +634,7 @@ def make_priority_based_pick(
         else max_priority + 1
     )
     pos_priorities[def_priority].append("DEF")
+    min_priority = min(min_priority, def_priority)
 
     k_priority = (
         get_position_priority("K", roster)
@@ -641,6 +642,7 @@ def make_priority_based_pick(
         else max_priority + 1
     )
     pos_priorities[k_priority].append("K")
+    min_priority = min(min_priority, k_priority)
 
     for priority in range(min_priority, max_priority + 2):
         highest_priority_pos = pos_priorities.get(priority, None)

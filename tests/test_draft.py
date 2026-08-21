@@ -1218,6 +1218,12 @@ def test_position_priority_marks_only_one_tier_as_the_first_bench_spot():
     assert get_position_priority("QB", priority_roster(QB=2)) == 2
 
 
+def test_position_priority_kicker_def_gets_high_priority():
+    # QB=1 -> the next QB is the first bench QB (1). QB=2 -> the next is the second (2).
+    assert get_position_priority("K", priority_roster(QB=3, RB=3, WR=6, TE=2)) == 0
+    assert get_position_priority("DEF", priority_roster(QB=3, RB=3, WR=6, TE=2)) == 0
+
+
 #############################################################
 # Tests for make_priority_based_pick
 #############################################################
@@ -1319,6 +1325,34 @@ def test_draft_priority_switches_to_par():
         roster, adp_partable(), "PAR", True, kicker_min_round=0, def_min_round=0
     )
     assert pick == ("RB_early", "RB")
+
+
+def test_draft_priority_gets_k_def():
+    """
+    Want to make sure we draft a kicker!
+    """
+    rows = []
+    for pos in ["QB", "RB", "WR", "TE", "K", "DEF"]:
+        for pt in range(20, 15, -1):
+            rows.append(
+                make_raw_row(f"{pos}_{pt}", position=pos, expected_points_per_game=pt)
+            )
+
+    partable = make_partable(rows)
+    # fill roster elsewhere
+    roster = priority_roster(QB=2, RB=3, WR=4, TE=2, DEF=1)
+    pick = make_priority_based_pick(
+        roster, partable, "expected_points_per_game", True, 0, 0
+    )
+    assert pick is not None
+    assert pick[1] == "K"
+    # fill roster elsewhere
+    roster = priority_roster(QB=2, RB=3, WR=4, TE=2, K=1)
+    pick = make_priority_based_pick(
+        roster, partable, "expected_points_per_game", True, 0, 0
+    )
+    assert pick is not None
+    assert pick[1] == "DEF"
 
 
 #############################################################
